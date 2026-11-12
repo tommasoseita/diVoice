@@ -23,7 +23,8 @@ private func harness(
   dictationMode: DictationMode = .dictation,
   context: DictationContext = DictationContext(bundleId: "com.tinyspeck.slackmacgap", appName: "Slack", windowTitle: "general"),
   fastPathMaxWords: Int = 12,
-  batchMaxAudioMs: Int = 25_000
+  batchMaxAudioMs: Int = 25_000,
+  chatHTTP: HTTPClient? = nil
 ) -> Harness {
   let transcription = FakeTranscription(realtime: realtime, batch: batch)
   let http = FakeHTTP(pieces: chat)
@@ -31,7 +32,7 @@ private func harness(
   settings.transcription.mode = mode
   settings.transcription.batchMaxAudioMs = batchMaxAudioMs
   settings.fastPathMaxWords = fastPathMaxWords
-  let chatClient = ChatCompletionsClient(provider: .mistral, endpoint: .direct(.mistral, apiKey: "k"), http: http)
+  let chatClient = ChatCompletionsClient(provider: .mistral, endpoint: .direct(.mistral, apiKey: "k"), http: chatHTTP ?? http)
   let deltas = Locked<[String]>([])
   let run = DictationRun(
     request: DictationRequest(
@@ -47,6 +48,21 @@ private func record(_ h: Harness, ms: Int, mode: DictationMode? = nil) async thr
   try await h.run.append(silence(ms: ms / 2))
   try await h.run.append(silence(ms: ms - ms / 2))
   return try await h.run.finish(mode: mode)
+}
+
+/// A chat that doesn't answer until it's cancelled.
+private final class SilentHTTP: HTTPClient, @unchecked Sendable {
+  private let called = Locked(false)
+  var asked: Bool { called.current }
+
+  func data(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    throw EngineError("not used")
+  }
+
+  func lines(_ request: URLRequest, label: String, _ onLine: (String) throws -> Void) async throws {
+    called.withValue { $0 = true }
+    try await Task.sleep(nanoseconds: 600_000_000_000)
+  }
 }
 
 @Suite struct DictationTests {
@@ -302,5 +318,79 @@ private func record(_ h: Harness, ms: Int, mode: DictationMode? = nil) async thr
     #expect(Prompts.scribe(rewrite)[0].content.contains("Really rewrite it"))
     #expect(Scribe.temperature(input(selected: "Ci vediamo giovedì.")) == 0.2)
     #expect(Scribe.temperature(input(selected: nil, history: [ChatMessage(role: .user, content: "a"), ChatMessage(role: .assistant, content: "b")])) == 0.2)
+  }
+
+  // MARK: What was dictated is never lost
+
+  @Test func whenScribeFailsTheTranscriptGoesIn() async throws {
+    let h = harness(
+      realtime: .success(TranscriptResult(text: "scrivi a centrix che la call slitta a giovedì")), dictationMode: .scribe,
+      context: DictationContext(bundleId: "com.apple.mail", appName: "Mail"))
+    h.http.status = 500
+    let output = try await record(h, ms: 1500)
+    #expect(output.mode == .scribe)
+    #expect(output.processing == .scribeFallback)
+    #expect(output.raw == "scrivi a centrix che la call slitta a giovedì")
+    // Tidied without a model: dictionary spellings and the capital letter.
+    #expect(output.text == "Scrivi a Zentrix che la call slitta a giovedì")
+    #expect(output.processingModel == nil)
+    #expect(output.transcriptionModel == "voxtral-mini-transcribe-realtime-3-0")
+    #expect(output.warnings.count == 1)
+    #expect(output.warnings.first?.hasPrefix("scribe: ") == true)
+    #expect(output.timings["scribeMs"] != nil)
+    #expect(output.words == 9)
+  }
+
+  @Test func theAppStoppingToWaitStillGetsTheTranscript() async throws {
+    let silent = SilentHTTP()
+    let h = harness(
+      realtime: .success(TranscriptResult(text: "una dettatura molto lunga")), dictationMode: .scribe,
+      context: DictationContext(bundleId: "com.apple.mail", appName: "Mail"), chatHTTP: silent)
+    await h.run.start()
+    try await h.run.append(silence(ms: 1500))
+    let finishing = Task { try await h.run.finish() }
+    // Scribe is writing, and won't answer.
+    try await eventually { silent.asked }
+    let output = try #require(await h.run.recover("no answer in time"))
+    #expect(output.processing == .scribeFallback)
+    #expect(output.text == "Una dettatura molto lunga")
+    #expect(output.warnings == ["scribe: no answer in time"])
+    // The run is over: the app cancels what was still waiting.
+    finishing.cancel()
+    await #expect(throws: CancellationError.self) { try await finishing.value }
+  }
+
+  @Test func aDictationStoppedWhileCleaningKeepsItsTranscriptToo() async throws {
+    let silent = SilentHTTP()
+    let h = harness(realtime: .success(TranscriptResult(text: longRaw)), chatHTTP: silent)
+    await h.run.start()
+    try await h.run.append(silence(ms: 2000))
+    let finishing = Task { try await h.run.finish() }
+    try await eventually { silent.asked }
+    let output = try #require(await h.run.recover("no answer in time"))
+    #expect(output.processing == .fastFallback)
+    #expect(output.raw == longRaw)
+    #expect(output.warnings == ["cleanup: no answer in time"])
+    finishing.cancel()
+    _ = try? await finishing.value
+  }
+
+  @Test func nothingToRecoverBeforeTheTranscript() async throws {
+    let h = harness(dictationMode: .scribe)
+    await h.run.start()
+    try await h.run.append(silence(ms: 1500))
+    #expect(await h.run.recover("no answer in time") == nil)
+  }
+
+  @Test func theAppWaitsLongerForLongDictations() {
+    // A short dictation: as before, 25 seconds, 75 with Scribe.
+    #expect(DictationRun.deadline(mode: .dictation, audioMs: 0) == 25)
+    #expect(DictationRun.deadline(mode: .scribe, audioMs: 0) == 75)
+    // Almost four minutes of Scribe: more than its own limit for that much text.
+    let long = 225_000
+    #expect(DictationRun.deadline(mode: .scribe, audioMs: long) > Scribe.timeout(chars: 225 * 20) + 15)
+    #expect(DictationRun.deadline(mode: .dictation, audioMs: long) > Cleanup.timeout(chars: 225 * 20) + 17)
+    // Hands-free at its limit: under 8 minutes.
+    #expect(DictationRun.deadline(mode: .scribe, audioMs: 590_000) < 480)
   }
 }

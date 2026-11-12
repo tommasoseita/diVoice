@@ -36,6 +36,8 @@ final class DictationController {
     var context: CapturedContext?
     var finished = false
     var timeout: DispatchWorkItem?
+    /// From the release to the final text: cancelled when the app stops waiting.
+    var processing: Task<Void, Never>?
     /// Hands-free: the stop just before the 10-minute limit.
     var lockLimit: DispatchWorkItem?
 
@@ -231,18 +233,24 @@ final class DictationController {
     onRecordingChange?(false)
     Sounds.stop(settings)
 
+    // The engine has its own limits, which keep the transcript: this one is for anything that hangs.
+    // It grows with the audio, so a long dictation has time for its transcription and Scribe.
+    let audioMs = session.timeline.firstAudioNs.map { releaseNs > $0 ? Int((releaseNs - $0) / 1_000_000) : 0 } ?? 0
     let timeout = DispatchWorkItem { [weak self, weak session] in
       guard let self, let session, !session.finished else { return }
-      Task { await session.run.cancel() }
-      self.fail(
-        session,
-        session.relay == nil
-          ? String(localized: "The provider did not answer in time") : String(localized: "The organization's server did not answer in time"))
+      let message = session.relay == nil
+        ? String(localized: "The provider did not answer in time") : String(localized: "The organization's server did not answer in time")
+      Task { @MainActor [weak self] in
+        // The transcript, if it's done, is still delivered.
+        let output = await session.run.recover("no answer in time")
+        session.processing?.cancel()
+        if let output { self?.deliver(output, for: session) } else { self?.fail(session, message) }
+      }
     }
     session.timeout = timeout
-    DispatchQueue.main.asyncAfter(deadline: .now() + (mode == .scribe ? 75 : 25), execute: timeout)
+    DispatchQueue.main.asyncAfter(deadline: .now() + DictationRun.deadline(mode: mode, audioMs: audioMs), execute: timeout)
 
-    Task { @MainActor [weak self] in
+    session.processing = Task { @MainActor [weak self] in
       // All the audio and the context first, then the end.
       await session.feeder?.value
       _ = await session.contextTask?.value
@@ -277,11 +285,18 @@ final class DictationController {
 
   private func deliver(_ output: DictationOutput, for session: Session) {
     guard !session.finished else { return }
+    finish(session)
     session.timeline.resultNs = MonotonicClock.nowNs()
     guard !output.text.isEmpty else {
-      finish(session)
       Task { await session.relay?.close() }
       overlay.showInfo(String(localized: "I didn't hear anything"))
+      return
+    }
+    let unanswered = output.processing == .scribeFallback
+    // Scribe was to rewrite the selection: the instruction mustn't replace it. It stays in History.
+    if unanswered, session.context?.context.selectedText?.isEmpty == false {
+      overlay.showError(String(localized: "Scribe didn't answer. What you said is in History."))
+      record(session, output)
       return
     }
     let text = SmartSpacing.adjust(output.text, textBefore: session.context?.textBefore)
@@ -290,10 +305,16 @@ final class DictationController {
       guard let self else { return }
       session.timeline.pastePostedNs = outcome.pastePostedNs
       session.timeline.insertedNs = outcome.insertedNs
-      self.finish(session)
       // The text in the app is the confirmation: the overlay just goes away.
-      if outcome.manual { self.overlay.showInfo(String(localized: "Text copied: press ⌘V")) } else { self.overlay.hide() }
-      if !outcome.manual, self.settings.learnFromCorrections, let field = session.context?.field, let pid = session.context?.pid {
+      if outcome.manual {
+        self.overlay.showInfo(String(localized: "Text copied: press ⌘V"))
+      } else if unanswered {
+        self.overlay.showInfo(String(localized: "Scribe didn't answer: I inserted your dictation without rewriting it"), seconds: 5)
+      } else {
+        self.overlay.hide()
+      }
+      // Edits to a transcript that Scribe didn't rewrite say nothing about the user's style.
+      if !outcome.manual, !unanswered, self.settings.learnFromCorrections, let field = session.context?.field, let pid = session.context?.pid {
         self.corrections.watch(field: field, pid: pid, inserted: text, category: output.category)
       }
       self.record(session, output)

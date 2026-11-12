@@ -24,9 +24,10 @@ Start with **Settings › Models › Verify**: it checks each step with your key
 | **… HTTP 429** | The provider is limiting your account. Wait a minute, or raise your limits in the provider's console. |
 | **I didn't hear anything** | The recording was silent. Check the input device in **System Settings › Sound** and the microphone chosen in **Settings › General**. |
 | **The organization's server did not answer in time** | Check your network; if it persists, tell your admin. |
+| **Scribe didn't answer: I inserted your dictation without rewriting it** | Scribe ran out of time or failed, so your dictation went in as you said it, tidied but not rewritten. History marks it **Not rewritten**. Select the text and ask Scribe again. If Scribe was editing a selection, nothing is inserted: what you said is in History. |
 | A network error | Dictations aren't queued: dictate again once you're online. |
 
-When the text was produced but didn't land where you wanted, **Paste last dictation** in the menu bar inserts it again.
+When the text was produced but didn't land where you wanted, **Paste last dictation** in the menu bar inserts it again. Once the transcription is done, a dictation isn't lost even if the cleanup or Scribe fails: the transcript goes in instead, and it's in **History**.
 
 ## The text doesn't appear
 

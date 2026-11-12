@@ -215,7 +215,8 @@ public struct DictationServices: Sendable {
 
 public struct DictationOutput: Sendable, Equatable {
   public enum Processing: String, Codable, Sendable {
-    case fast, llm, fastFallback = "fast_fallback", scribe, empty
+    /// `scribeFallback`: Scribe didn't answer, so the text is the transcript, tidied as `fastFallback`.
+    case fast, llm, fastFallback = "fast_fallback", scribe, scribeFallback = "scribe_fallback", empty
   }
 
   public var mode: DictationMode
@@ -240,12 +241,10 @@ public struct DictationOutput: Sendable, Equatable {
 
 public enum DictationError: Error, LocalizedError, Equatable {
   case transcriptionFailed(String)
-  case scribeFailed(String)
 
   public var errorDescription: String? {
     switch self {
     case .transcriptionFailed(let message): "Transcription failed: \(message)"
-    case .scribeFailed(let message): "Scribe failed: \(message)"
     }
   }
 }
@@ -262,6 +261,16 @@ public actor DictationRun {
   private var mode: DictationMode
   private var cancelled = false
   private var timings: [String: Double] = [:]
+  /// The transcript, once the transcription is done: kept if what follows fails.
+  private var transcript: Transcript?
+
+  private struct Transcript {
+    var raw: String
+    var path: TranscriptionPath
+    var model: String?
+    var audioMs: Int
+    var warnings: [String]
+  }
 
   public static func sampleRate(for settings: PipelineSettings) -> Int {
     settings.transcription.provider.sampleRate
@@ -312,6 +321,36 @@ public actor DictationRun {
     await transcription.abort()
   }
 
+  /// Seconds the app waits after the key is released: a margin over the cleanup's or Scribe's
+  /// own limit for that much speech (about 20 characters a second), plus time for the
+  /// transcription. Whichever runs out first, the transcript is kept (`recover`).
+  public static func deadline(mode: DictationMode, audioMs: Int) -> Double {
+    let seconds = Double(max(0, audioMs)) / 1000
+    let chars = Int(seconds * 20)
+    let processing = mode == .scribe ? 15 + Scribe.timeout(chars: chars) : 17 + Cleanup.timeout(chars: chars)
+    return processing + seconds / 4
+  }
+
+  /// When the app stops waiting: the transcript, if it's there, as the text (as when Scribe or
+  /// the cleanup fails), and the run ends; nil if the transcription isn't done.
+  public func recover(_ reason: String) async -> DictationOutput? {
+    cancelled = true
+    await transcription.abort()
+    guard let transcript, !transcript.raw.isEmpty else { return nil }
+    return fallback(transcript, reason: reason)
+  }
+
+  /// The transcript, tidied without a model, instead of the cleanup or Scribe.
+  private func fallback(_ transcript: Transcript, reason: String) -> DictationOutput {
+    let text = Cleanup.fastClean(transcript.raw, entries: request.vocabulary, category: category, insertion: request.context.insertion)
+    let step = mode == .scribe ? "scribe" : "cleanup"
+    return DictationOutput(
+      mode: mode, text: text, raw: transcript.raw, category: category, transcription: transcript.path,
+      processing: mode == .scribe ? .scribeFallback : .fastFallback, transcriptionModel: transcript.model, processingModel: nil,
+      timings: timings, warnings: transcript.warnings + ["\(step): \(reason)"], audioMs: transcript.audioMs,
+      words: TextTools.wordCount(text), termsUsed: Vocabulary.termsUsed(text, request.vocabulary))
+  }
+
   /// Ends the audio and produces the final text. `mode` overrides the starting one
   /// (Ctrl pressed after Fn turns a dictation into Scribe).
   public func finish(mode override: DictationMode? = nil) async throws -> DictationOutput {
@@ -341,6 +380,8 @@ public actor DictationRun {
     if let connect = await transcription.upstreamConnectMs { timings["upstreamConnectMs"] = connect }
     timings["transcribeMs"] = now() - endedAt
     if cancelled { throw CancellationError() }
+    let transcript = Transcript(raw: raw, path: path, model: transcriptionModel, audioMs: audioMs, warnings: warnings)
+    self.transcript = transcript
 
     let style = Categories.style(for: category, overrides: request.styles)
     var text = ""
@@ -368,6 +409,7 @@ public actor DictationRun {
         dictionary: Vocabulary.promptList(request.vocabulary), instruction: raw, selectedText: request.context.selectedText,
         history: Prompts.sanitizeHistory(request.scribeHistory), textBefore: request.context.textBefore,
         screenText: request.context.screenText)
+      let scribeStarted = now()
       do {
         let result = try await Scribe.run(
           input, entries: request.vocabulary, settings: settings.scribe, chat: services.scribe, onDelta: onScribeDelta)
@@ -377,7 +419,11 @@ public actor DictationRun {
         if let ttft = result.ttftMs { timings["scribeTtftMs"] = ttft }
         timings["scribeMs"] = result.ms
       } catch {
-        throw DictationError.scribeFailed(errorMessage(error))
+        // What was dictated is never lost: without Scribe, the transcript goes in.
+        if cancelled { throw CancellationError() }
+        timings["scribeMs"] = now() - scribeStarted
+        timings["pipelineMs"] = now() - endedAt
+        return fallback(transcript, reason: errorMessage(error))
       }
     }
     if cancelled { throw CancellationError() }

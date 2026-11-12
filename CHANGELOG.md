@@ -2,6 +2,19 @@
 
 All notable changes to diVoice. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [semantic versioning](https://semver.org).
 
+## 0.6.1 — Long dictations are never lost
+
+### Fixed
+
+- **A long Scribe dictation could be lost.** Scribe had one minute to answer, however long the dictation. When it ran out, the transcript was thrown away. Now:
+  - Scribe gets more time for longer dictations, up to five minutes.
+  - If Scribe still fails, diVoice inserts your dictation as you said it, tidied but not rewritten. History marks it **Not rewritten**.
+  - If Scribe was rewriting a selection, nothing replaces it: what you said stays in History.
+  - The cleanup of long dictations also gets more time.
+  - The app waits longer for long recordings before giving up.
+
+  Through an organization's server, Scribe also stops at the server's own limit: 90 seconds up to diServer 0.6.0. Past it, the dictation goes in as above.
+
 ## 0.6.0 — Your own AI server
 
 Cleanup and Scribe on any OpenAI-compatible server, and the transcription provider at the first launch. Contributed by Luca Sartoni ([#1](https://github.com/tommasoseita/diVoice/pull/1)).

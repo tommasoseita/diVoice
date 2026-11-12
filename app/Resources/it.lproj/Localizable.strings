@@ -209,6 +209,8 @@
 "Team link" = "Link di team";
 "The organization's server answered with an error (%@)" = "Il server dell'organizzazione ha risposto con un errore (%@)";
 "The organization's server did not answer in time" = "Il server dell'organizzazione non ha risposto in tempo";
+"Scribe didn't answer: I inserted your dictation without rewriting it" = "Scribe non ha risposto: ho inserito la dettatura senza riscriverla";
+"Scribe didn't answer. What you said is in History." = "Scribe non ha risposto. Quello che hai detto è nella Cronologia.";
 "Then check them with Verify in the Models tab." = "Poi controllali con Verifica nella scheda Modelli.";
 "This invite can't be used" = "Questo invito non si può usare";
 "To join another organization, first leave this one in Settings › Organization." = "Per unirti a un'altra organizzazione, prima esci da questa in Impostazioni › Organizzazione.";
@@ -289,6 +291,7 @@
 "No dictation matches your search." = "Nessuna dettatura corrisponde alla ricerca.";
 "Copy what you said" = "Copia quello che hai detto";
 "What you said" = "Quello che hai detto";
+"Not rewritten" = "Non riscritto";
 "Style" = "Stile";
 "Add app…" = "Aggiungi app…";
 "Add website" = "Aggiungi sito";

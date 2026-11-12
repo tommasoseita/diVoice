@@ -202,4 +202,22 @@ private func client(_ http: FakeHTTP, _ provider: ProviderID = .mistral) -> Chat
       original: "centrix", corrected: "Zentrix", sentence: nil, settings: .cleanupDefaults(.mistral), chat: chat)
     #expect(invented == nil)
   }
+
+  @Test func longTextsGetMoreTimeAndRoom() {
+    // Scribe: a minute for a short dictation, more for a long one, never over five.
+    #expect(Scribe.timeout(chars: 0) == 60)
+    #expect(Scribe.timeout(chars: 4_500) > 170)
+    #expect(Scribe.timeout(chars: 100_000) == 300)
+    #expect(Scribe.maxTokens(chars: 300) == 1_500)
+    #expect(Scribe.maxTokens(chars: 6_000) == 3_500)
+    // The cleanup: 8 seconds, up to 30.
+    #expect(Cleanup.timeout(chars: 0) == 8)
+    #expect(Cleanup.timeout(chars: 4_000) == 18)
+    #expect(Cleanup.timeout(chars: 100_000) == 30)
+
+    let long = String(repeating: "scrivi a Marco che la riunione slitta a giovedì ", count: 120)
+    let input = Prompts.ScribeInput(userName: "", appName: nil, windowTitle: nil, category: .email, style: "", dictionary: "", instruction: long)
+    let call = Scribe.call(input, settings: ChatSettings(provider: .mistral, model: "mistral-medium-2604"))
+    #expect(call.maxTokens == long.utf16.count / 2 + 500)
+  }
 }

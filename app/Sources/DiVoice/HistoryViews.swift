@@ -79,6 +79,8 @@ private struct HistoryRow: View {
           Text(verbatim: category.title).font(.system(size: 11.5)).foregroundStyle(.secondary)
         }
         if entry.mode == DictationMode.scribe.rawValue { Pill("Scribe", icon: "wand.and.stars") }
+        // Scribe didn't answer: the text is the transcript.
+        if entry.cleanup == DictationOutput.Processing.scribeFallback.rawValue { Pill("Not rewritten", icon: "exclamationmark.triangle", tint: .orange) }
         Spacer()
         Button(copied == .text ? "Copied" : "Copy") { copy(entry.text, .text) }.buttonStyle(.secondary)
       }

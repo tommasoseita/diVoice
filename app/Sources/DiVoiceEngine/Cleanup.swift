@@ -83,6 +83,12 @@ public enum Cleanup {
     return Double(kept) < Double(written.count) * 0.5
   }
 
+  /// Seconds for the model's answer: 8, and one more for every 400 characters, so that a long
+  /// dictation gets cleaned too (at most 30; an organization's server stops at 20 anyway).
+  public static func timeout(chars: Int) -> Double {
+    min(30, 8 + Double(chars) / 400)
+  }
+
   public struct Request: Sendable {
     public var raw: String
     public var entries: [VocabularyEntry]
@@ -123,7 +129,7 @@ public enum Cleanup {
       fastTier: request.settings.fastTier)
     let fallback = { fastClean(raw, entries: request.entries, category: request.category, insertion: request.insertion) }
     do {
-      let result = try await chat.stream(call, timeout: 8, onDelta: nil)
+      let result = try await chat.stream(call, timeout: timeout(chars: raw.utf16.count), onDelta: nil)
       let text = postProcess(result.text, entries: request.entries)
       if looksWrong(text, raw: raw) {
         return CleanupResult(
@@ -154,10 +160,27 @@ public struct ScribeResult: Sendable, Equatable {
 /// Writes a draft from a spoken instruction, or rewrites the selected text.
 public enum Scribe {
   /// The request for a draft or a rewrite (also used by Verify and the bench).
-  public static func call(_ input: Prompts.ScribeInput, settings: ChatSettings, maxTokens: Int = 1_500) -> ChatCall {
+  public static func call(_ input: Prompts.ScribeInput, settings: ChatSettings, maxTokens: Int? = nil) -> ChatCall {
     ChatCall(
-      model: settings.model, messages: Prompts.scribe(input), temperature: temperature(input), maxTokens: maxTokens,
+      model: settings.model, messages: Prompts.scribe(input), temperature: temperature(input),
+      maxTokens: maxTokens ?? Self.maxTokens(chars: length(input)),
       reasoning: settings.reasoning ?? WantedReasoning.scribe, fastTier: settings.fastTier)
+  }
+
+  /// What Scribe reads and rewrites: the dictation and the selected text.
+  static func length(_ input: Prompts.ScribeInput) -> Int {
+    input.instruction.utf16.count + (input.selectedText?.utf16.count ?? 0)
+  }
+
+  /// Seconds for the whole answer: a minute, and one more for every 40 characters, because the
+  /// model reads, thinks about and rewrites all of a long dictation (at most 5 minutes).
+  public static func timeout(chars: Int) -> Double {
+    min(300, 60 + Double(chars) / 40)
+  }
+
+  /// Room for the answer: a rewrite is about as long as what it rewrites, a draft can be longer.
+  static func maxTokens(chars: Int) -> Int {
+    max(1_500, chars / 2 + 500)
   }
 
   /// A free rewrite of what was dictated gets more room than an edit of a selection
@@ -173,7 +196,7 @@ public enum Scribe {
     onDelta: (@Sendable (String) -> Void)?
   ) async throws -> ScribeResult {
     let call = call(input, settings: settings)
-    let result = try await chat.stream(call, timeout: 60, onDelta: onDelta)
+    let result = try await chat.stream(call, timeout: timeout(chars: length(input)), onDelta: onDelta)
     return ScribeResult(
       text: Vocabulary.applyAliases(result.text.trimmingCharacters(in: .whitespacesAndNewlines), entries),
       model: settings.model, ttftMs: result.ttftMs, ms: result.totalMs)

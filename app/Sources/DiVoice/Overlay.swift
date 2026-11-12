@@ -140,8 +140,8 @@ final class OverlayController: NSObject, NSWindowDelegate {
     show(.processing)
   }
 
-  func showInfo(_ message: String) {
-    show(.info(message), hideAfter: 2.5)
+  func showInfo(_ message: String, seconds: TimeInterval = 2.5) {
+    show(.info(message), hideAfter: seconds)
   }
 
   func showError(_ message: String) {
