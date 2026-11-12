@@ -2,6 +2,12 @@
 
 All notable changes to diVoice. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [semantic versioning](https://semver.org).
 
+## Unreleased
+
+### Changed
+
+- **Plain `http` for an OpenAI-compatible server only where it is safe to offer.** An address on your Mac (`localhost`, `127.0.0.1`) is accepted as before. One on a private network (`10.x.x.x`, `172.16–31.x.x`, `192.168.x.x`, `.local` names and the like) is accepted with a warning that the connection isn't encrypted. Anywhere else diVoice now asks for `https`, instead of saving an address macOS would refuse to connect to.
+
 ## 0.6.0 — Your own AI server
 
 Cleanup and Scribe on any OpenAI-compatible server, and the transcription provider at the first launch. Contributed by Luca Sartoni ([#1](https://github.com/tommasoseita/diVoice/pull/1)).

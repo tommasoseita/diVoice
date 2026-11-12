@@ -14,7 +14,7 @@ Only while you hold the dictation key, and only for that dictation, plus the occ
 | **Cleanup provider, to learn** | A word you corrected and the sentence around it, or five of your corrections in one kind of app (as diVoice wrote them and as you left them), to sum up how you like to write | The same, through your organization's server, during your next dictation |
 | **Your organization's server** | Nothing | For each dictation: word count, audio length, local day, typing speed, app category, timings. Never the text. |
 
-Your API keys are sent only to their own provider. If you choose an OpenAI-compatible server for cleanup or Scribe, what the table lists for those steps goes to the address you typed, with the key you saved for it: where it goes from there depends on that server.
+Your API keys are sent only to their own provider. If you choose an OpenAI-compatible server for cleanup or Scribe, what the table lists for those steps goes to the address you typed, with the key you saved for it: where it goes from there depends on that server. Over plain `http`, which diVoice accepts only for your Mac and private network addresses, they travel unencrypted on that network.
 
 The audio is captured only while the key is held; diVoice never listens in the background. The overlay shows a recording indicator whenever the microphone is in use.
 

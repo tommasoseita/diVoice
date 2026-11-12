@@ -346,3 +346,5 @@
 "Server address" = "Indirizzo del server";
 "LiteLLM, Ollama or any other server with OpenAI's chat completions API." = "LiteLLM, Ollama o qualsiasi altro server con l'API chat completions di OpenAI.";
 "Cleanup and Scribe only" = "Solo pulizia e Scribe";
+"Not encrypted: your text and the key travel in clear on your local network. Use it only on a network you trust." = "Non cifrata: il testo e la chiave viaggiano in chiaro sulla rete locale. Usala solo su una rete di cui ti fidi.";
+"Plain http is accepted only for this Mac and private network addresses: use https." = "L'http semplice è accettato solo per questo Mac e per gli indirizzi di rete privata: usa https.";

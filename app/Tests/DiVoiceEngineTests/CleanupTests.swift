@@ -130,6 +130,40 @@ private func client(_ http: FakeHTTP, _ provider: ProviderID = .mistral) -> Chat
     #expect(base("http://") == nil)
   }
 
+  @Test func plainHTTPIsAcceptedOnlyOnThisMacAndPrivateNetworks() throws {
+    func address(_ text: String) -> ProviderEndpoint.CompatibleAddress { ProviderEndpoint.compatibleAddress(text) }
+    func isLocal(_ text: String) -> Bool {
+      if case .localHTTP = address(text) { return true }
+      return false
+    }
+    func isLoopback(_ text: String) -> Bool {
+      if case .loopback = address(text) { return true }
+      return false
+    }
+    // This Mac: nothing to warn about.
+    #expect(isLoopback("http://localhost:4000"))
+    #expect(isLoopback("http://127.0.0.1:11434/v1"))
+    #expect(isLoopback("http://[::1]:4000"))
+    // Private networks: accepted, with a warning.
+    for host in ["10.0.0.5", "172.16.0.1", "172.31.255.254", "192.168.1.20", "169.254.10.1", "100.64.0.1", "100.100.20.3", "studio.local", "litellm"] {
+      #expect(isLocal("http://\(host):4000"), "\(host)")
+    }
+    #expect(isLocal("http://[fd12:3456::1]:4000"))
+    #expect(isLocal("http://[fe80::1]:4000"))
+    #expect(address("http://192.168.1.20:4000/v1").url?.absoluteString == "http://192.168.1.20:4000")
+    // Anywhere else plain http is refused.
+    for host in ["llm.example.com", "8.8.8.8", "172.32.0.1", "172.15.0.1", "192.169.1.1", "100.128.0.1", "11.0.0.1", "[2001:db8::1]"] {
+      #expect(address("http://\(host):4000") == .remoteHTTP, "\(host)")
+      #expect(ProviderEndpoint.compatibleBaseURL("http://\(host):4000") == nil)
+    }
+    // https is fine everywhere, and the default without a scheme outside private networks.
+    let secure = try #require(URL(string: "https://192.168.1.20"))
+    #expect(address("https://192.168.1.20") == .secure(secure))
+    #expect(address("8.8.8.8:4000").url?.absoluteString == "https://8.8.8.8:4000")
+    #expect(address("10.1.2.3:4000").url?.absoluteString == "http://10.1.2.3:4000")
+    #expect(address("not a url") == .invalid)
+  }
+
   @Test func compatibleServerRunsOnlyCleanupAndScribe() {
     #expect(ProviderID.compatible.supportsChat)
     #expect(!ProviderID.compatible.supportsTranscription)

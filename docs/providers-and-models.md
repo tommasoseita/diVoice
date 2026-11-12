@@ -43,7 +43,7 @@ Cleanup and Scribe can run on any server that speaks OpenAI's chat completions A
 
 - diVoice sends only the standard parameters (`model`, `messages`, `stream`, `temperature`, `max_tokens`): no reasoning effort, predicted outputs or fast processing.
 - The server must stream its answers (server-sent events), as LiteLLM and Ollama do.
-- Plain `http` works for a server on your Mac or your local network; anywhere else the address must be `https`.
+- Plain `http` is accepted only for a server on your Mac (`localhost`, `127.0.0.1`) or at a private network address: `10.x.x.x`, `172.16–31.x.x`, `192.168.x.x`, `169.254.x.x`, `100.64–127.x.x` (VPNs such as Tailscale), IPv6 `fc00::/7` and `fe80::/10`, `.local` names and names without a domain. On a private network diVoice warns you that the connection isn't encrypted: your text and the server's key travel in clear, so use it only on a network you trust. Anywhere else the address must be `https`.
 - The speed depends on your server and model: check the first token time with Verify and aim for under a second for cleanup.
 
 ## Transcription modes

@@ -280,8 +280,19 @@ struct CompatibleServerField: View {
         .font(.system(size: 12).monospaced())
         .labelsHidden()
         .autocorrectionDisabled()
-      if !settings.compatibleBaseURL.trimmingCharacters(in: .whitespaces).isEmpty, settings.compatibleServer == nil {
-        Text("This doesn't look like a server address.").font(.system(size: 11.5)).foregroundStyle(Theme.accent)
+      if !settings.compatibleBaseURL.trimmingCharacters(in: .whitespaces).isEmpty {
+        switch ProviderEndpoint.compatibleAddress(settings.compatibleBaseURL) {
+        case .secure, .loopback:
+          EmptyView()
+        case .localHTTP:
+          Label("Not encrypted: your text and the key travel in clear on your local network. Use it only on a network you trust.", systemImage: "exclamationmark.triangle")
+            .font(.system(size: 11.5)).foregroundStyle(Theme.accent).fixedSize(horizontal: false, vertical: true)
+        case .remoteHTTP:
+          Text("Plain http is accepted only for this Mac and private network addresses: use https.")
+            .font(.system(size: 11.5)).foregroundStyle(Theme.accent).fixedSize(horizontal: false, vertical: true)
+        case .invalid:
+          Text("This doesn't look like a server address.").font(.system(size: 11.5)).foregroundStyle(Theme.accent)
+        }
       }
     }
   }

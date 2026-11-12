@@ -42,20 +42,69 @@ public struct ProviderEndpoint: Sendable, Equatable {
     ProviderEndpoint(baseURL: provider.defaultBaseURL, apiKey: apiKey, keyHeader: provider.keyHeader)
   }
 
-  /// The base URL of an OpenAI-compatible server from the address the user typed: with or
-  /// without the scheme, a final slash, `/v1` or the whole `/v1/chat/completions`.
-  /// Nil when it isn't an http(s) address.
-  public static func compatibleBaseURL(_ address: String) -> URL? {
+  /// The address of an OpenAI-compatible server, as the user typed it.
+  public enum CompatibleAddress: Sendable, Equatable {
+    /// https: encrypted.
+    case secure(URL)
+    /// Plain http to this Mac itself: nothing leaves it.
+    case loopback(URL)
+    /// Plain http to a private network address: accepted, but not encrypted.
+    case localHTTP(URL)
+    /// Plain http to a public address: refused.
+    case remoteHTTP
+    case invalid
+
+    /// The base URL to call; nil when the address is refused or not valid.
+    public var url: URL? {
+      switch self {
+      case .secure(let url), .loopback(let url), .localHTTP(let url): url
+      case .remoteHTTP, .invalid: nil
+      }
+    }
+  }
+
+  /// Where a host is, for plain http: this Mac, a private network, or anywhere else.
+  enum HostScope: Equatable { case loopback, privateNetwork, remote }
+
+  /// Private networks are the address ranges that never cross the internet: IPv4 10/8, 172.16/12,
+  /// 192.168/16, link-local 169.254/16 and shared 100.64/10 (VPNs such as Tailscale), IPv6
+  /// unique local fc00::/7 and link-local fe80::/10, `.local` names and names without a domain.
+  static func hostScope(_ host: String) -> HostScope {
+    let host = host.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+    if host == "localhost" || host == "::1" { return .loopback }
+    if host.contains(":") {
+      let first = host.prefix(3)
+      if host.hasPrefix("fc") || host.hasPrefix("fd") || ["fe8", "fe9", "fea", "feb"].contains(String(first)) { return .privateNetwork }
+      return .remote
+    }
+    let parts = host.split(separator: ".", omittingEmptySubsequences: false)
+    if parts.count == 4, !parts.contains(where: { $0.isEmpty || !$0.allSatisfy(\.isNumber) }) {
+      let bytes = parts.compactMap { UInt8($0) }
+      guard bytes.count == 4 else { return .remote }
+      switch (bytes[0], bytes[1]) {
+      case (127, _): return .loopback
+      case (10, _), (192, 168), (169, 254), (172, 16...31), (100, 64...127): return .privateNetwork
+      default: return .remote
+      }
+    }
+    if host.hasSuffix(".local") || !host.contains(".") { return .privateNetwork }
+    return .remote
+  }
+
+  /// Reads the address the user typed: with or without the scheme, a final slash, `/v1` or the
+  /// whole `/v1/chat/completions`. Plain http is accepted only for this Mac and private networks.
+  public static func compatibleAddress(_ address: String) -> CompatibleAddress {
     var text = address.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !text.isEmpty else { return nil }
+    // URLComponents would percent-encode spaces instead of refusing them.
+    guard !text.isEmpty, text.rangeOfCharacter(from: .whitespacesAndNewlines) == nil else { return .invalid }
     if !text.contains("://") {
-      // Without a scheme: plain http for this Mac and the local network, https for the rest.
-      let local = #"^(localhost|\[[0-9a-fA-F:]+\]|\d+\.\d+\.\d+\.\d+|[^/:]+\.local)(:\d+)?(/.*)?$"#
-      text = (text.range(of: local, options: .regularExpression) != nil ? "http://" : "https://") + text
+      // Without a scheme: plain http for this Mac and private networks, https for the rest.
+      let host = URLComponents(string: "http://" + text)?.host ?? ""
+      text = (!host.isEmpty && hostScope(host) != .remote ? "http://" : "https://") + text
     }
     guard var components = URLComponents(string: text), let scheme = components.scheme?.lowercased(), ["http", "https"].contains(scheme),
       let host = components.host, !host.isEmpty
-    else { return nil }
+    else { return .invalid }
     var path = components.path
     for suffix in ["/", "/chat/completions", "/", "/v1", "/"] {
       while path.hasSuffix(suffix) { path.removeLast(suffix.count) }
@@ -64,7 +113,19 @@ public struct ProviderEndpoint: Sendable, Equatable {
     components.path = path
     components.query = nil
     components.fragment = nil
-    return components.url
+    guard let url = components.url else { return .invalid }
+    if scheme == "https" { return .secure(url) }
+    switch hostScope(host) {
+    case .loopback: return .loopback(url)
+    case .privateNetwork: return .localHTTP(url)
+    case .remote: return .remoteHTTP
+    }
+  }
+
+  /// The base URL of an OpenAI-compatible server from the address the user typed; nil when it
+  /// isn't valid, or is plain http outside this Mac and private networks.
+  public static func compatibleBaseURL(_ address: String) -> URL? {
+    compatibleAddress(address).url
   }
 
   /// An OpenAI-compatible server at `baseURL`, with a bearer key.
