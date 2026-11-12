@@ -16,7 +16,16 @@ Only while you hold the dictation key, and only for that dictation, plus the occ
 
 Your API keys are sent only to their own provider. If you choose an OpenAI-compatible server for cleanup or Scribe, what the table lists for those steps goes to the address you typed, with the key you saved for it: where it goes from there depends on that server.
 
-The audio is captured only while the key is held; diVoice never listens in the background. The overlay shows a recording indicator whenever the microphone is in use.
+The audio of a dictation is what you say while the key is held, plus the half second before you pressed it (below). The overlay shows a recording indicator during a dictation.
+
+**Keep the microphone ready** (Settings › General, on by default) keeps the microphone on between dictations, so that the first words aren't cut while the microphone starts:
+- Only the last half second is kept, in memory, and continuously overwritten. It's never saved, transcribed or sent.
+- When you press the key, that half second becomes the start of the dictation.
+- macOS shows its microphone indicator the whole time.
+- The microphone goes off while the Mac sleeps, its screen is off or it's locked.
+- It's never kept on with a Bluetooth headset.
+
+With the setting off, the microphone turns on only when you press the key.
 
 ## What diVoice reads on your Mac
 
@@ -29,7 +38,7 @@ With the Accessibility permission, when you start a dictation diVoice reads:
 
 Each read has a short timeout and happens only at the start of a dictation. Then diVoice pastes the text into the app and restores your clipboard as soon as the app has read it.
 
-**After the insertion**, if **Learn from my corrections** is on (Settings › Style), diVoice reads the same field once a second until you move to another field or app, for two minutes at most, to see what you changed in the dictated text. Only that change is kept.
+**After the insertion**, if **Learn from my corrections** is on (Settings › Style), diVoice reads the same field once a second, and once more when you press Return, to see what you changed in the dictated text. The extra read catches a chat message just before it's sent. It stops when you move to another field or app, send the message, or after two minutes. Only that change is kept.
 
 ## What stays on your Mac
 

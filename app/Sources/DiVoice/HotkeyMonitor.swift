@@ -14,6 +14,8 @@ final class HotkeyMonitor {
   var onAction: ((HotkeyAction) -> Void)?
   /// The system disabled the tap: a key release may have been lost.
   var onReset: (() -> Void)?
+  /// Return or Enter goes down, before the app gets it. Called on the tap's thread: it must be quick.
+  var onReturn: (() -> Void)?
 
   private let lock = NSLock()
   private var machine: HotkeyStateMachine
@@ -114,6 +116,7 @@ final class HotkeyMonitor {
 
     let keyCode = UInt16(truncatingIfNeeded: event.getIntegerValueField(.keyboardEventKeycode))
     let flags = event.flags.rawValue
+    if type == .keyDown, keyCode == KeyCode.returnKey || keyCode == KeyCode.keypadEnter { onReturn?() }
     let timestamp = MonotonicClock.eventUptimeNs(
       event.timestamp,
       nowNs: MonotonicClock.nowNs(),

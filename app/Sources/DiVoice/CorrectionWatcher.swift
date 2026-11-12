@@ -3,8 +3,10 @@ import ApplicationServices
 import DiVoiceEngine
 
 /// After an insertion, keeps an eye on the field until the user moves on (another field or app,
-/// two minutes, the next dictation), then reports what they corrected in the dictated text.
-/// The reads happen off the main thread; nothing is kept once the correction is reported.
+/// two minutes, the next dictation, or the message sent with Return), then reports what they
+/// corrected in the dictated text. The field is read once a second, and when Return goes down,
+/// before a chat sends the message and empties the field. The reads happen off the main thread;
+/// nothing is kept once the correction is reported.
 final class CorrectionWatcher {
   var onCorrection: ((Correction, AppCategory) -> Void)?
 
@@ -24,11 +26,16 @@ final class CorrectionWatcher {
   private var timer: DispatchSourceTimer?
   private var watch: Watch?
   private static let maxDuration: TimeInterval = 120
+  /// The watched field, for `returnPressed` on the hotkey thread, which doesn't wait for `queue`.
+  private let watchedLock = NSLock()
+  private var watched: (field: AXUIElement, pid: pid_t)?
 
   /// Starts watching `field` in the app `pid`, where `inserted` was just pasted.
   func watch(field: AXUIElement, pid: pid_t, inserted: String, category: AppCategory) {
     finish()
     queue.async {
+      // After the previous watch has ended (`finish` runs first on this queue).
+      self.watchedLock.withLock { self.watched = (field, pid) }
       self.watch = Watch(field: field, pid: pid, inserted: inserted, category: category)
       let timer = DispatchSource.makeTimerSource(queue: self.queue)
       // The paste lands a moment later: the first read is the baseline.
@@ -42,6 +49,34 @@ final class CorrectionWatcher {
   /// Stops watching and reports the correction, if there was one.
   func finish() {
     queue.async { self.stop() }
+  }
+
+  /// Return or Enter is going down, on the hotkey thread, before the app gets it: in a chat the
+  /// field still holds the message about to be sent. One short read, only while a dictated text
+  /// is watched in the frontmost app.
+  func returnPressed() {
+    guard let watched = watchedLock.withLock({ watched }),
+      NSWorkspace.shared.frontmostApplication?.processIdentifier == watched.pid
+    else { return }
+    AXUIElementSetMessagingTimeout(watched.field, 0.1)
+    let value = Self.string(watched.field, kAXValueAttribute)
+    queue.async { self.sending(value) }
+  }
+
+  /// The text as it was when Return went down; if the field then empties, it was sent: the
+  /// watch ends there. Otherwise Return was a new line or picked a suggestion: it goes on.
+  private func sending(_ value: String?) {
+    guard var current = watch, let baseline = current.baseline, let range = current.range else { return }
+    if let value, let correction = CorrectionDiff.find(baseline: baseline, inserted: range, final: value) {
+      current.latest = correction
+      watch = current
+    }
+    let field = current.field
+    queue.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+      guard let self, let now = self.watch, CFEqual(now.field, field) else { return }
+      AXUIElementSetMessagingTimeout(field, 0.15)
+      if Self.string(field, kAXValueAttribute)?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true { self.stop() }
+    }
   }
 
   private func tick() {
@@ -85,6 +120,7 @@ final class CorrectionWatcher {
     timer?.cancel()
     timer = nil
     watch = nil
+    watchedLock.withLock { watched = nil }
   }
 
   /// Where the dictated text is: right before the cursor, or its last occurrence in the field.

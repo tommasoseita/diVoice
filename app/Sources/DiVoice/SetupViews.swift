@@ -724,6 +724,13 @@ struct SettingsView: View {
           .fixedSize()
         }
         Divider()
+        CardRow(
+          "Keep the microphone ready",
+          detail: "So the first words are never cut. Between dictations the microphone stays on and only the last half second is kept in memory, then added to the start of your next dictation. Nothing leaves your Mac until you press the key. macOS shows the microphone indicator. Not with Bluetooth headsets: it would lower their sound."
+        ) {
+          Toggle("", isOn: $settings.keepMicrophoneReady).toggleStyle(.pill).labelsHidden()
+        }
+        Divider()
         CardRow("Start and end sounds") {
           Toggle("", isOn: $settings.playSounds).toggleStyle(.pill).labelsHidden()
         }

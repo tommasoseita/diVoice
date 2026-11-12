@@ -2,6 +2,23 @@
 
 All notable changes to diVoice. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [semantic versioning](https://semver.org).
 
+## 0.6.2 — The microphone is always ready
+
+The first words are never cut, and corrections made just before sending a chat message are learned.
+
+### Added
+
+- **The microphone is always ready, so the first words aren't cut.** The microphone used to turn on at the key press, which takes about 0.2 seconds (up to 0.5), and words said meanwhile were lost. Now:
+  - Between dictations it stays on and keeps only the last half second, in memory and overwritten.
+  - When you press the key, that half second starts the dictation.
+  - It goes off while the Mac sleeps, its screen is off or it's locked.
+  - It's never kept on with a Bluetooth headset, whose sound it would lower.
+  - macOS shows its microphone indicator. **Settings › General › Keep the microphone ready** turns it off.
+
+### Fixed
+
+- **Corrections made just before sending a chat message weren't learned.** diVoice read the field once a second, and a chat empties it as soon as you press Return. Now the field is also read the moment you press Return, before the app sends the message. The watch then ends once the message is sent.
+
 ## 0.6.1 — Long dictations are never lost
 
 ### Fixed

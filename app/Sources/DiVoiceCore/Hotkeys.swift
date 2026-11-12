@@ -20,6 +20,8 @@ public enum KeyCode {
   public static let escape: UInt16 = 53
   /// What macOS sends (key down and up) right after a quick tap of 🌐/Fn is released.
   public static let globeTap: UInt16 = 179
+  public static let returnKey: UInt16 = 36
+  public static let keypadEnter: UInt16 = 76
 }
 
 /// A modifier key that starts dictation while held down.

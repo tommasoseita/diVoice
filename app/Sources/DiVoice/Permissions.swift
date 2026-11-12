@@ -2,6 +2,10 @@ import AppKit
 import ApplicationServices
 import AVFoundation
 
+extension Notification.Name {
+  static let diVoiceMicrophoneAllowed = Notification.Name("diVoiceMicrophoneAllowed")
+}
+
 enum Permissions {
   static var microphone: AVAuthorizationStatus {
     AVCaptureDevice.authorizationStatus(for: .audio)
@@ -9,7 +13,11 @@ enum Permissions {
 
   static func requestMicrophone(_ completion: @escaping (Bool) -> Void) {
     AVCaptureDevice.requestAccess(for: .audio) { granted in
-      DispatchQueue.main.async { completion(granted) }
+      DispatchQueue.main.async {
+        // The microphone can be got ready now.
+        if granted { NotificationCenter.default.post(name: .diVoiceMicrophoneAllowed, object: nil) }
+        completion(granted)
+      }
     }
   }
 

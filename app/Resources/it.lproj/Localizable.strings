@@ -292,6 +292,8 @@
 "Copy what you said" = "Copia quello che hai detto";
 "What you said" = "Quello che hai detto";
 "Not rewritten" = "Non riscritto";
+"Keep the microphone ready" = "Microfono sempre pronto";
+"So the first words are never cut. Between dictations the microphone stays on and only the last half second is kept in memory, then added to the start of your next dictation. Nothing leaves your Mac until you press the key. macOS shows the microphone indicator. Not with Bluetooth headsets: it would lower their sound." = "Così le prime parole non vengono mai tagliate. Tra una dettatura e l'altra il microfono resta acceso e viene tenuto in memoria solo l'ultimo mezzo secondo, che si aggiunge all'inizio della dettatura successiva. Niente lascia il Mac finché non premi il tasto. macOS mostra l'indicatore del microfono. Non con le cuffie Bluetooth: ne peggiorerebbe l'audio.";
 "Style" = "Stile";
 "Add app…" = "Aggiungi app…";
 "Add website" = "Aggiungi sito";

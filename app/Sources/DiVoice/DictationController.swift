@@ -72,10 +72,27 @@ final class DictationController {
     prepareMicrophone()
   }
 
-  /// Prepares the audio engine ahead of time (without turning the microphone on).
+  /// Gets the microphone ready for the next dictation: on, with the last half second in memory
+  /// (Keep the microphone ready), or prepared so that only the hardware start remains.
   func prepareMicrophone() {
     guard Permissions.microphone == .authorized else { return }
-    audio.prepare(deviceUID: settings.microphoneUID, sampleRate: DictationRun.sampleRate(for: EngineFactory.activePipeline(settings)))
+    let sampleRate = DictationRun.sampleRate(for: EngineFactory.activePipeline(settings))
+    if settings.keepMicrophoneReady {
+      audio.standby(deviceUID: settings.microphoneUID, sampleRate: sampleRate)
+    } else {
+      audio.endStandby()
+      audio.prepare(deviceUID: settings.microphoneUID, sampleRate: sampleRate)
+    }
+  }
+
+  /// The Mac sleeps or locks: no dictation until it's back, so the microphone goes off.
+  func pauseMicrophone() {
+    audio.pauseStandby()
+  }
+
+  /// Return was pressed, on the hotkey thread: a chat may be sending the corrected text.
+  func returnPressed() {
+    corrections.returnPressed()
   }
 
   func handle(_ action: HotkeyAction) {

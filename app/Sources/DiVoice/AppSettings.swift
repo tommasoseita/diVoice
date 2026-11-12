@@ -30,6 +30,8 @@ final class AppSettings: ObservableObject {
   @Published var typingWPM: Int { didSet { defaults.set(typingWPM, forKey: "typingWPM") } }
   /// Settings › Style: tones, own instructions and app rules.
   @Published var style: StylePreferences { didSet { save(style, "style") } }
+  /// The microphone stays on between dictations, holding the last half second in memory.
+  @Published var keepMicrophoneReady: Bool { didSet { defaults.set(keepMicrophoneReady, forKey: "keepMicrophoneReady") } }
   /// Read the conversation and the text around the cursor at the start of a dictation.
   @Published var useScreenContext: Bool { didSet { defaults.set(useScreenContext, forKey: "useScreenContext") } }
   /// Learn names and writing preferences from what the user corrects after an insertion.
@@ -46,6 +48,7 @@ final class AppSettings: ObservableObject {
       "onboardingCompleted": false,
       "typingWPM": 40,
       "useScreenContext": true,
+      "keepMicrophoneReady": true,
       "learnFromCorrections": true,
     ])
     var pipeline = Self.load(PipelineSettings.self, "pipeline", defaults) ?? .defaults(.mistral)
@@ -62,6 +65,7 @@ final class AppSettings: ObservableObject {
     typingWPM = defaults.integer(forKey: "typingWPM")
     style = Self.load(StylePreferences.self, "style", defaults) ?? StylePreferences()
     useScreenContext = defaults.bool(forKey: "useScreenContext")
+    keepMicrophoneReady = defaults.bool(forKey: "keepMicrophoneReady")
     learnFromCorrections = defaults.bool(forKey: "learnFromCorrections")
   }
 

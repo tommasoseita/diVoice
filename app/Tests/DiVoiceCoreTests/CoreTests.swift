@@ -31,6 +31,24 @@ struct PCMTests {
     #expect(framer.flush() == nil)
     #expect(PCM.durationMs(bytes: 32000) == 1000)
   }
+
+  @Test func theRingKeepsOnlyTheLastHalfSecond() {
+    var ring = PCMRing(ms: 500, sampleRate: 16_000)
+    #expect(ring.capacity == 16_000)
+    // Two seconds of numbered samples: only the newest half second stays, oldest first.
+    var samples = Data()
+    for i in 0..<32_000 { withUnsafeBytes(of: Int16(truncatingIfNeeded: i).littleEndian) { samples.append(contentsOf: $0) } }
+    for start in stride(from: 0, to: samples.count, by: 2_048) { ring.append(samples.subdata(in: start..<min(start + 2_048, samples.count))) }
+    let kept = ring.take()
+    #expect(kept.count == 16_000)
+    #expect(kept == samples.suffix(16_000))
+    #expect(ring.count == 0)
+    // An odd capacity rounds down to whole samples.
+    #expect(PCMRing(capacity: 9).capacity == 8)
+    ring.append(Data(count: 100))
+    ring.reset()
+    #expect(ring.take().isEmpty)
+  }
 }
 
 @Suite("Timing")

@@ -4,7 +4,7 @@
 
 **Hold Fn, speak, release.** The text appears where your cursor is, in any app.
 
-- **Start when you hear the sound.** The microphone is prepared in advance, and the start sound plays when it is really recording.
+- **Start speaking right away.** With **Keep the microphone ready** (Settings › General, on by default), the microphone is already on and the dictation includes the half second before you pressed the key, so the first words aren't cut. With it off, or with a Bluetooth headset, the microphone turns on at the key press: start when you hear the sound.
 - **Speak naturally.** Hesitations ("um", "ehm") and filler words go away. Self-corrections are applied to the part you corrected: "on Thursday at three, actually four" becomes "on Thursday at four".
 - **Dictate punctuation when you want it:** "comma", "period", "question mark", "new line", "new paragraph" (also in Italian: "virgola", "punto", "a capo"…). Otherwise diVoice punctuates for you.
 - **Numbers, dates, times, amounts and email addresses** come out in their written form ("at 3:30 pm", "20%", "name@example.com").
@@ -91,7 +91,7 @@ As soon as the text is in your app, the overlay disappears. The menu bar menu sh
 - **Tone:** for email, Formal, Cordial (the default) or Direct; for work chat, Professional, Direct (the default) or Informal; for personal chat, Natural or Informal; for documents and notes, Polished or Notes. Code and AI assistants always stay literal.
 - **Your instructions:** a few words for each kind of app, such as "I use Lei with clients, and I sign Ada". They win over the tone.
 - **Apps and websites:** diVoice recognizes most apps by itself. Assign any other app to a kind of app with **Add app…**, or a website by a word of its window title (for example "hubspot") with **Add website**.
-- **Learned from your corrections:** when you fix a dictated text right after it's inserted, diVoice learns from it. A name or a term you correct goes into your dictionary, and the overlay says "Added to the dictionary". After five corrections in a kind of app, diVoice notes in a few lines how you like to write there (greetings, sign-off, punctuation, formality), and from then on writes that way. You can edit those lines, **Forget** them, or turn learning off. The corrections stay on your Mac for 7 days at most.
+- **Learned from your corrections:** when you fix a dictated text right after it's inserted, diVoice learns from it. A name or a term you correct goes into your dictionary, and the overlay says "Added to the dictionary". In a chat, what you change before pressing Return is caught just before the message is sent. After five corrections in a kind of app, diVoice notes in a few lines how you like to write there (greetings, sign-off, punctuation, formality), and from then on writes that way. You can edit those lines, **Forget** them, or turn learning off. The corrections stay on your Mac for 7 days at most.
 
 ## The dictionary
 
@@ -122,7 +122,7 @@ Statistics count words and time, never what you said. In personal mode they stay
 
 | Page | What's there |
 |---|---|
-| General | Shortcuts, dictation language, microphone, sounds, clipboard, overlay position, login item, permission status |
+| General | Shortcuts, dictation language, microphone and keeping it ready, sounds, clipboard, overlay position, login item, permission status |
 | Models | Provider and model for transcription, cleanup and Scribe, your API keys, Verify (with an organization: its models, read-only) |
 | Style | Tone and your own instructions for each kind of app, apps and websites assigned to a kind, what diVoice learned from your corrections |
 | Dictionary | Your terms, and your organization's |

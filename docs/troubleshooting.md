@@ -10,6 +10,7 @@ Start with **Settings › Models › Verify**: it checks each step with your key
 - **Hands-free doesn't start.** The two taps must be quick: each shorter than about a third of a second, and the second within 0.4 s of the first. A slower first tap counts as a short dictation.
 - **External keyboard without Fn.** Hold **right ⌘** instead (changeable to right ⌥ in **Settings › General**).
 - **You tapped instead of holding.** A single quick tap is ignored, so a tap of Fn keeps working as before. Two quick taps start hands-free dictation: press Fn once more to finish.
+- **The first words are cut.** Turn on **Settings › General › Keep the microphone ready**. With a Bluetooth headset it stays off, so wait for the start sound, or choose the Mac's microphone in **Settings › General**.
 - **Another key was pressed with Fn.** Fn plus another key is a shortcut (Fn+arrows, Fn+F keys), so diVoice cancels the dictation.
 
 ## The overlay shows an error

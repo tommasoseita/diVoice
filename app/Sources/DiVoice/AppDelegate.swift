@@ -17,6 +17,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var accessibilityTimer: Timer?
   private var orgTimer: Timer?
   private var cancellables = Set<AnyCancellable>()
+  /// Between the system's "locked" and "unlocked" notifications.
+  private var screenLocked = false
 
   func applicationDidFinishLaunching(_ notification: Notification) {
     // Without a main menu, ⌘V, ⌘C, ⌘A and ⌘Z don't reach text fields.
@@ -40,6 +42,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     hotkeys.onAction = { [weak self] action in self?.controller.handle(action) }
     hotkeys.onReset = { [weak self] in self?.controller.handle(.cancel(.otherKey)) }
+    // On the hotkey thread, before the app gets the key: the controller reads the field quickly.
+    let controller = self.controller!
+    hotkeys.onReturn = { controller.returnPressed() }
     controller.onRecordingChange = { [weak self] recording in self?.statusItem.setRecording(recording) }
     controller.onNeedsSetup = { [weak self] in self?.showSetup() }
     StatsStore.shared.importHistoryIfNeeded(history.entries)
@@ -66,6 +71,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       .receive(on: DispatchQueue.main)
       .sink { [weak self] _ in self?.controller.prepareMicrophone() }
       .store(in: &cancellables)
+    // Another microphone, Keep the microphone ready turned on or off, or the permission just given.
+    Publishers.Merge(settings.$microphoneUID.removeDuplicates().map { _ in () }, settings.$keepMicrophoneReady.removeDuplicates().map { _ in () })
+      .dropFirst(2)
+      .merge(with: NotificationCenter.default.publisher(for: .diVoiceMicrophoneAllowed).map { _ in () })
+      .receive(on: DispatchQueue.main)
+      .sink { [weak self] in self?.controller.prepareMicrophone() }
+      .store(in: &cancellables)
+    observeSleep()
     org.$notice
       .compactMap { $0 }
       .receive(on: DispatchQueue.main)
@@ -146,6 +159,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           self?.afterJoin()
         },
         onCancel: { [weak self] in self?.windows.close("create-org") })
+    }
+  }
+
+  /// While the Mac sleeps, its screen is off or it's locked, nobody dictates: a microphone kept
+  /// ready goes off, and comes back on afterwards (not at a locked screen).
+  private func observeSleep() {
+    let workspace = NSWorkspace.shared.notificationCenter
+    let off: [Notification.Name] = [NSWorkspace.willSleepNotification, NSWorkspace.screensDidSleepNotification, NSWorkspace.sessionDidResignActiveNotification]
+    let on: [Notification.Name] = [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification, NSWorkspace.sessionDidBecomeActiveNotification]
+    for name in off {
+      workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.controller.pauseMicrophone() }
+    }
+    for name in on {
+      workspace.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+        guard let self, !self.screenLocked else { return }
+        self.controller.prepareMicrophone()
+      }
+    }
+    let distributed = DistributedNotificationCenter.default()
+    distributed.addObserver(forName: Notification.Name("com.apple.screenIsLocked"), object: nil, queue: .main) { [weak self] _ in
+      self?.screenLocked = true
+      self?.controller.pauseMicrophone()
+    }
+    distributed.addObserver(forName: Notification.Name("com.apple.screenIsUnlocked"), object: nil, queue: .main) { [weak self] _ in
+      self?.screenLocked = false
+      self?.controller.prepareMicrophone()
     }
   }
 

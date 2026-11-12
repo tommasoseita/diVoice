@@ -65,3 +65,36 @@ public struct PCMFramer: Sendable {
     return buffer.isEmpty ? nil : buffer
   }
 }
+
+/// The last stretch of audio, for the moment before a dictation starts: older audio drops out.
+public struct PCMRing: Sendable {
+  /// In bytes, whole 16-bit samples.
+  public let capacity: Int
+  private var buffer = Data()
+
+  public init(capacity: Int) {
+    self.capacity = max(0, capacity - capacity % 2)
+  }
+
+  /// `ms` of mono 16-bit audio at `sampleRate`.
+  public init(ms: Int, sampleRate: Int) {
+    self.init(capacity: sampleRate * ms / 1000 * 2)
+  }
+
+  public var count: Int { buffer.count }
+
+  public mutating func append(_ data: Data) {
+    buffer.append(data)
+    if buffer.count > capacity { buffer = Data(buffer.suffix(capacity)) }
+  }
+
+  /// Everything held, oldest first; the ring is empty afterwards.
+  public mutating func take() -> Data {
+    defer { buffer = Data() }
+    return buffer
+  }
+
+  public mutating func reset() {
+    buffer = Data()
+  }
+}
