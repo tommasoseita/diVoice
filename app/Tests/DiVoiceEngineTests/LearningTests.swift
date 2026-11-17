@@ -37,6 +37,11 @@ import Testing
     #expect(CorrectionDiff.find(baseline: baseline, inserted: range, final: "Oggetto: demo\nNon posso venire, scusa.\nA presto") == nil)
     // Unchanged.
     #expect(CorrectionDiff.find(baseline: baseline, inserted: range, final: baseline) == nil)
+    // Going on typing after removing the final period.
+    let (chat, chatRange) = inserted("", "Sì, ci vediamo tra dieci giorni. Ne parliamo domani.")
+    #expect(CorrectionDiff.find(baseline: chat, inserted: chatRange, final: "Sì, ci vediamo tra dieci giorni. Ne parliamo domani in uffi") == nil)
+    // Changing only the punctuation is still a correction.
+    #expect(CorrectionDiff.find(baseline: chat, inserted: chatRange, final: "Sì, ci vediamo tra dieci giorni. Ne parliamo domani!") != nil)
   }
 
   @Test func styleLearningAsksForShortLinesWithoutTheTextsFacts() {
@@ -50,11 +55,22 @@ import Testing
   }
 
   @Test func styleLearningKeepsOnlyTheListLines() async throws {
-    let http = FakeHTTP(pieces: ["Here are the preferences:\n", "- Greets with \"Ciao Nome,\" on its own line.\n", "- Signs \"Ada\".\n"])
+    let http = FakeHTTP(pieces: [
+      "Here are the preferences:\n", "- Greets with \"Ciao Nome,\" on its own line.\n", "- Signs \"Ada\".\n",
+      "- Usare \"Elena\" come nome di chiusura\n", "- Usare \"Ciao\" come saluto iniziale\n",
+      "- No final period in short messages.\n",
+    ])
     let chat = ChatCompletionsClient(provider: .mistral, endpoint: .direct(.mistral, apiKey: "k"), http: http)
     let lines = try await StyleLearning.run(
       current: nil, pairs: [CorrectionPair(before: "a", after: "b")], category: .email, language: "English",
       settings: .cleanupDefaults(.mistral), chat: chat)
-    #expect(lines == "- Greets with \"Ciao Nome,\" on its own line.\n- Signs \"Ada\".")
+    // Greetings, sign-offs and signatures never join the style.
+    #expect(lines == "- No final period in short messages.")
+  }
+
+  @Test func styleLearningNeverAsksForGreetingsOrSignatures() {
+    let system = StyleLearning.messages(current: nil, pairs: [], category: .workChat, language: "Italian")[0].content
+    #expect(system.contains("no greetings, sign-offs, signatures or names"))
+    #expect(system.contains("Only patterns that at least two corrections show"))
   }
 }

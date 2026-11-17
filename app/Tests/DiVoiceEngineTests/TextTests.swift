@@ -112,7 +112,7 @@ private let seed = [
     let prefs = StylePreferences(tones: ["email": "formal"], instructions: ["work_chat": "  No emoji.  "])
     let styles = prefs.styles(learned: ["email": "Signs \"Ada\"."])
     #expect(styles["email"]?.hasPrefix(formal.style) == true)
-    #expect(styles["email"]?.contains("Learned from the user's own corrections: Signs \"Ada\".") == true)
+    #expect(styles["email"]?.contains("Learned from the user's own corrections (how to write what they say, never something to add): Signs \"Ada\".") == true)
     #expect(styles["work_chat"] == Categories.defaultStyles[.workChat]! + "\nThe user's own instructions, which win over everything else: No emoji.")
     #expect(styles["docs"] == nil)
     #expect(prefs.tone(for: .email) == "formal")

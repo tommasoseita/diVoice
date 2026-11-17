@@ -23,9 +23,64 @@ struct SafetyTests {
     ]
     for (raw, cleaned) in cases {
       #expect(!Cleanup.looksTranslated(cleaned, raw: raw), "\(cleaned)")
+      #expect(!Cleanup.addsUnsaidWords(cleaned, raw: raw, entries: []), "\(cleaned)")
     }
     // Too short to judge.
     #expect(!Cleanup.looksTranslated("See you tomorrow.", raw: "Ci vediamo domani."))
+  }
+
+  /// Cleanups like the real ones of November 2026 (other names and texts), led astray by learned
+  /// preferences or the text on screen.
+  @Test func cleanupThatAddsGreetingsOrNamesIsDiscarded() {
+    let wrong = [
+      ("Marta Bellini.", "Ciao Marta!"),
+      ("Giulia Ferraro.", "Ciao! Giulio Ferraro."),
+      ("Preventivi, contatti fornitori.", "Preventivi, contatti fornitori! Ciao!"),
+      ("Preventivi, contatto clienti.", "Ciao!  Preventivi, contatto clienti."),
+      ("Riscrivimela qui con l'editor.", "Ciao!  Riscrivilo qui con l'editor."),
+      (
+        "Come ti abbiamo detto, da qui all'inizio di dicembre stiamo raccogliendo le adesioni dei partecipanti.",
+        "Ciao,\n\nda qui all’inizio di dicembre stiamo raccogliendo le adesioni dei partecipanti.\n\nCordiali saluti\nMario Rossi"
+      ),
+      ("Ci vediamo giovedì in ufficio.", "Ci vediamo giovedì in ufficio.\n\nElena"),
+      ("Guarda su Notion la parte di Budget e la parte di...", "Guarda su Notion la parte di Budget e la parte di Marketing."),
+    ]
+    for (raw, cleaned) in wrong {
+      #expect(Cleanup.addsUnsaidWords(cleaned, raw: raw, entries: []), "\(cleaned)")
+    }
+    let right = [
+      ("chavo come va oggi con il progetto", "Ciao, come va oggi con il progetto?"),
+      ("ciao marco ti confermo la call di domani alle dieci grazie a presto tommaso", "Ciao Marco,\n\nti confermo la call di domani alle 10.\n\nGrazie, a presto\nTommaso"),
+      ("Aspettiamo la persona con cui ho fatto la chiamata prima di Teralyon.", "Aspettiamo la persona con cui ho fatto la chiamata prima di Teralaion."),
+      ("lascia che sia disponibile anche per chi scaricherà Dmail", "Lascia che sia disponibile anche per chi scaricherà diMail."),
+      ("Domani vedo Marco, anzi Luca, alle dieci.", "Domani vedo Luca alle 10."),
+      ("Marta Bellini.", "Marta Bellini"),
+      ("ok la ringrazio le mando il file", "Ok, La ringrazio. Le mando il file."),
+      ("I'll send it to Marco tonight", "I'll send it to Marco tonight."),
+    ]
+    for (raw, cleaned) in right {
+      #expect(!Cleanup.addsUnsaidWords(cleaned, raw: raw, entries: []), "\(cleaned)")
+    }
+  }
+
+  @Test func dictionaryAndOwnInstructionsMayAddWords() {
+    let entry = VocabularyEntry(term: "Zentrix Hub", aliases: ["centrics hub"], scope: .team, source: .manual)
+    #expect(!Cleanup.addsUnsaidWords("Il rinnovo di Zentrix Hub è ricorrente.", raw: "il rinnovo di centrics hub è ricorrente", entries: [entry]))
+    #expect(Cleanup.addsUnsaidWords("Il rinnovo di Zentrix Hub è ricorrente.", raw: "il rinnovo di centrics hub è ricorrente", entries: []))
+    let style = "A short work chat.\n" + StylePreferences(instructions: ["work_chat": "Firma sempre Tommaso."]).styles()["work_chat"]!
+    #expect(!Cleanup.addsUnsaidWords("Ci vediamo domani.\n\nTommaso", raw: "ci vediamo domani", entries: [], style: style))
+    #expect(Cleanup.addsUnsaidWords("Ci vediamo domani.\n\nTommaso", raw: "ci vediamo domani", entries: []))
+    // Learned preferences are not the user's own instructions.
+    let learned = StylePreferences().styles(learned: ["work_chat": "- Usare \"Sara\" come firma"])["work_chat"]!
+    #expect(Cleanup.addsUnsaidWords("Ci vediamo domani.\n\nSara", raw: "ci vediamo domani", entries: [], style: learned))
+  }
+
+  @Test func cleanupThatEchoesThePromptIsDiscarded() {
+    let echo = "App di destinazione: Claude (Codice e assistenti IA)\nStile: Trascrizione fedele e letterale.\n\nTrascrizione:\nAllora, nella nuova slide 12 dobbiamo cambiarla."
+    #expect(Cleanup.echoesPrompt(echo))
+    #expect(Cleanup.looksWrong(echo, raw: "Allora, nella nuova slide 12 dobbiamo cambiarla in questo modo, con un esempio in più."))
+    #expect(Cleanup.echoesPrompt("Ok.\n<<<\nCiao Elena\n>>>"))
+    #expect(!Cleanup.echoesPrompt("Stile: moderno, con colori chiari."))
   }
 
   @Test func transcriptLanguageIsDetectedOnTheDevice() {

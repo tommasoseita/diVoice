@@ -23,7 +23,12 @@ final class LearningStore: ObservableObject {
     var learned: [String: String] = [:]
     /// Replaced words, waiting for the classifier.
     var words: [WordCorrection] = []
+    /// 2 since 0.6.3. Missing in older files, whose preferences could ask for greetings and
+    /// signatures the user never said.
+    var version: Int?
   }
+
+  static let version = 2
 
   @Published private(set) var state = State()
   private let url: URL?
@@ -38,6 +43,13 @@ final class LearningStore: ObservableObject {
     let decoder = JSONDecoder()
     decoder.dateDecodingStrategy = .iso8601
     if let data = try? Data(contentsOf: url), let saved = try? decoder.decode(State.self, from: data) { state = saved }
+    if (state.version ?? 0) < Self.version {
+      // Learned before 0.6.3: start over (the replaced words stay).
+      state.learned = [:]
+      state.pairs = [:]
+      state.version = Self.version
+      save()
+    }
     prune()
   }
 
@@ -57,8 +69,9 @@ final class LearningStore: ObservableObject {
       state.words.append(WordCorrection(date: Date(), original: original, corrected: corrected, sentence: sentence))
       state.words = Array(state.words.suffix(10))
     case let .rewrite(before, after):
-      // Code stays literal: nothing to learn about style there.
-      guard category != .code else { return }
+      // Code stays literal, and the other apps (search fields, forms, AI assistants) have no
+      // style of their own: nothing to learn there.
+      guard category != .code, category != .other else { return }
       state.pairs[category.rawValue, default: []].append(CorrectionPair(before: before, after: after))
       state.pairs[category.rawValue] = Array(state.pairs[category.rawValue]!.suffix(StyleLearning.batch * 2))
     }

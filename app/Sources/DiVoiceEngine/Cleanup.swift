@@ -70,7 +70,73 @@ public enum Cleanup {
     if o == 0 { return true }
     if Double(o) > Double(r) * 2 + 60 { return true }
     if r > 40 && Double(o) < Double(r) * 0.35 { return true }
-    return looksTranslated(output, raw: raw)
+    return looksTranslated(output, raw: raw) || echoesPrompt(output)
+  }
+
+  private static let promptLabel = TextTools.regex(
+    "(?m)^[ \\t]*(target app|app di destinazione|app target|style|stile|transcript language|lingua della trascrizione|transcript|trascrizione|position|posizione)[ \\t]*:",
+    ignoreCase: true)
+
+  /// The model wrote back the message it got (its labels, maybe translated) instead of the text.
+  static func echoesPrompt(_ output: String) -> Bool {
+    if output.contains("<<<") || output.contains(">>>") { return true }
+    let labels = promptLabel.matches(in: output, range: TextTools.fullRange(output)).compactMap { match in
+      Range(match.range(at: 1), in: output).map { output[$0].lowercased() }
+    }
+    return Set(labels).count >= 2
+  }
+
+  /// Greetings and sign-offs: the user says them, the cleanup never adds them.
+  static let greetings: Set<String> = [
+    "ciao", "salve", "buongiorno", "buonasera", "buonanotte", "gentile", "gentilissimo", "gentilissima", "gentilissimi",
+    "caro", "cara", "cari", "care", "cordiali", "cordialmente", "saluti", "salutoni", "hi", "hello", "hey", "dear",
+    "regards", "sincerely", "cheers", "bonjour", "salut", "hola", "hallo",
+  ]
+  /// Words the cleanup drops on purpose: they don't count as words it replaced.
+  private static let fillers: Set<String> = [
+    "eh", "ehm", "em", "uhm", "um", "uh", "mh", "mm", "mmm", "cioè", "tipo", "allora", "niente", "praticamente", "insomma",
+    "like", "so", "basically",
+  ]
+  /// Capitalized in courtesy forms ("La ringrazio"), not names.
+  private static let courtesy: Set<String> = ["lei", "le", "la", "lo", "suo", "sua", "suoi", "sue", "loro", "voi", "vi", "vostro", "vostra"]
+  /// Words that take back what was just said: then a name can go on purpose.
+  private static let selfCorrection = TextTools.regex(
+    "(?<![\\p{L}])(anzi|no|aspetta|volevo dire|scusa|scusate|i mean|actually|sorry|wait)(?![\\p{L}])", ignoreCase: true)
+
+  /// Guards against a cleanup that changes who or what the text is about: a greeting or a
+  /// sign-off the user didn't say, a name that isn't in the transcript (taken from the screen, a
+  /// learned preference or nowhere), or a name of the transcript that's gone. A word the model
+  /// fixed (a misheard name or greeting, close to the word it replaced), the dictionary's terms
+  /// and the words of the user's own instructions are fine.
+  static func addsUnsaidWords(_ output: String, raw: String, entries: [VocabularyEntry], style: String = "") -> Bool {
+    let raw = Vocabulary.applyAliases(raw, entries)
+    let spoken = TextTools.words(raw)
+    let spokenSet = Set(spoken)
+    let written = TextTools.words(output)
+    let writtenSet = Set(written)
+    var allowed = Set(entries.filter(\.enabled).flatMap { TextTools.words($0.term) })
+    if let own = StylePreferences.ownInstructions(in: style) { allowed.formUnion(TextTools.words(own)) }
+    // Spoken words the output doesn't have: the ones the model may have fixed.
+    let replaced = Set(spoken.filter { !writtenSet.contains($0) && !fillers.contains($0) })
+    let isFix = { (word: String) in replaced.contains { TextTools.isClose(word, $0) } }
+
+    for word in written where !spokenSet.contains(word) && !allowed.contains(word) {
+      if greetings.contains(word), !isFix(word) { return true }
+    }
+    for token in TextTools.capitalizedWords(output) {
+      let word = token.lowercased()
+      guard !spokenSet.contains(word), !allowed.contains(word), !courtesy.contains(word) else { continue }
+      if !isFix(word) { return true }
+    }
+    // A name said mid-sentence that's gone, unless the user took something back.
+    if !TextTools.matches(selfCorrection, raw) {
+      for token in TextTools.capitalizedWords(raw) {
+        let word = token.lowercased()
+        guard !writtenSet.contains(word), !courtesy.contains(word) else { continue }
+        if !written.contains(where: { TextTools.isClose(word, $0) }) { return true }
+      }
+    }
+    return false
   }
 
   /// Cleanup keeps the spoken words: a translation (which small models sometimes do
@@ -131,7 +197,7 @@ public enum Cleanup {
     do {
       let result = try await chat.stream(call, timeout: timeout(chars: raw.utf16.count), onDelta: nil)
       let text = postProcess(result.text, entries: request.entries)
-      if looksWrong(text, raw: raw) {
+      if looksWrong(text, raw: raw) || addsUnsaidWords(text, raw: raw, entries: request.entries, style: request.style) {
         return CleanupResult(
           text: fallback(), path: .fastFallback, model: model, ttftMs: result.ttftMs, ms: now() - started,
           error: "model answer discarded", discarded: text)

@@ -35,6 +35,15 @@ public enum CorrectionDiff {
     guard start >= dictatedStart, oldEnd <= dictatedEnd else { return nil }
     // Pure typing at either end of the dictated text continues it, it doesn't correct it.
     if start == oldEnd, start == dictatedStart || start == dictatedEnd { return nil }
+    // So does typing that only replaces the punctuation at an end ("…domani." → "…domani in ufficio").
+    let removed = old.substring(with: NSRange(location: start, length: oldEnd - start))
+    let typed = new.substring(with: NSRange(location: start, length: max(0, newEnd - start)))
+    if oldEnd == dictatedEnd || start == dictatedStart,
+      removed.trimmingCharacters(in: .punctuationCharacters.union(.whitespacesAndNewlines)).isEmpty,
+      TextTools.wordCount(typed) > 0
+    {
+      return nil
+    }
 
     let original = old.substring(with: inserted)
     let corrected = new.substring(with: NSRange(location: dictatedStart, length: inserted.length + new.length - old.length))
@@ -95,11 +104,18 @@ public enum StyleLearning {
     """
     You learn how a user likes their dictated text written, from the corrections they make after diVoice inserts it.
     You get their current preferences (maybe none) and pairs of texts: as diVoice wrote it, and as the user left it.
-    Write the updated preferences: at most 6 short lines, each starting with "- ", about recurring patterns only, such as greetings and sign-offs, punctuation, formality ("tu" or "Lei"), paragraphs, and word choices the user keeps making. Keep earlier preferences unless the corrections contradict them, and drop a guess that a single correction can't support.
-    Never include facts, topics or names from the texts, except the name the user signs with.
+    Write the updated preferences: at most 6 short lines, each starting with "- ", only about how the user's own words are written: punctuation, capital letters, line breaks and paragraphs, formality ("tu" or "Lei"), and words they keep replacing with others. Only patterns that at least two corrections show. Keep earlier preferences unless the corrections contradict them.
+    Some pairs aren't corrections at all (the user went on typing, or wrote something else): ignore what they added.
+    Never write a preference that adds words the user didn't say: no greetings, sign-offs, signatures or names. Never include facts, topics or names from the texts.
+    If nothing qualifies, reply with the current preferences unchanged, or with "none" if there are none.
     Write the lines in \(language). Reply with the lines only.
     """
   }
+
+  /// Lines about greetings, sign-offs or signatures: whatever the model meant, they lead the
+  /// cleanup to add words the user didn't say, so they never join the style.
+  private static let addsWords = TextTools.regex(
+    "(?<![\\p{L}])(salut|firm|chiusur|commiat|greet|sign|closing|valediction)", ignoreCase: true)
 
   public static func messages(current: String?, pairs: [CorrectionPair], category: AppCategory, language: String) -> [ChatMessage] {
     var user = "Kind of app: \(Categories.promptLabels[category] ?? category.rawValue)\n\nCurrent preferences:\n"
@@ -119,7 +135,8 @@ public enum StyleLearning {
       model: settings.model, messages: messages(current: current, pairs: pairs, category: category, language: language),
       temperature: 0, maxTokens: 300, reasoning: WantedReasoning.classifier)
     let text = try await chat.stream(call, timeout: 20, onDelta: nil).text
-    let lines = text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { $0.hasPrefix("-") }
+    let lines = text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+      .filter { $0.hasPrefix("-") && !TextTools.matches(addsWords, $0) }
     guard !lines.isEmpty else { return nil }
     return String(lines.prefix(6).joined(separator: "\n").prefix(StylePreferences.maxInstructions))
   }

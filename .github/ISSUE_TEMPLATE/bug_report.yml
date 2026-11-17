@@ -29,7 +29,7 @@ body:
     attributes:
       label: diVoice version
       description: In the menu bar menu, at the bottom.
-      placeholder: "0.6.2 (602)"
+      placeholder: "0.6.3 (603)"
     validations:
       required: true
   - type: input

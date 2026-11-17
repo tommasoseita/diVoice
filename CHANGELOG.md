@@ -2,6 +2,20 @@
 
 All notable changes to diVoice. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [semantic versioning](https://semver.org).
 
+## 0.6.3 — No more made-up greetings
+
+diVoice no longer adds greetings, signatures or names you didn't say.
+
+### Fixed
+
+- **diVoice added greetings and names you didn't say.** A full name dictated on its own came out as "Ciao" and the first name, a reply got someone else's signature, and an unfinished sentence got a word from the screen. The preferences learned from your corrections could ask for greetings and signatures, and they were learned from edits that weren't corrections. Now:
+  - Learning keeps only how your words are written (punctuation, line breaks, formality, words you keep replacing), and only what at least two corrections show. It never keeps greetings, sign-offs, signatures or names.
+  - Learning happens only in email, chat and document apps, not in other apps (search fields, forms, AI assistants) or code.
+  - Going on typing after the dictated text no longer counts as a correction, even when you first delete its final period.
+  - A cleanup that adds a greeting or a name you didn't say, or drops a name you said, is discarded: diVoice inserts your dictation as you said it, tidied. Your dictionary and your own instructions in Settings › Style can still add words, such as a signature.
+  - The preferences learned so far are cleared once.
+- **A cleanup could start with its own instructions** ("Target app: … Style: … Transcript:") before your text. It's now discarded.
+
 ## 0.6.2 — The microphone is always ready
 
 The first words are never cut, and corrections made just before sending a chat message are learned.

@@ -240,6 +240,17 @@ public struct StylePreferences: Codable, Sendable, Equatable {
 
   public static let maxInstructions = 600
 
+  static let learnedLabel =
+    "Learned from the user's own corrections (how to write what they say, never something to add): "
+  static let ownLabel = "The user's own instructions, which win over everything else: "
+
+  /// The user's own instructions inside a composed style: the only part that may ask the
+  /// cleanup for words the user didn't say, such as a signature.
+  static func ownInstructions(in style: String) -> String? {
+    guard let range = style.range(of: ownLabel) else { return nil }
+    return String(style[range.upperBound...])
+  }
+
   public init(tones: [String: String] = [:], instructions: [String: String] = [:], rules: [AppRule] = []) {
     self.tones = tones
     self.instructions = instructions
@@ -261,8 +272,8 @@ public struct StylePreferences: Codable, Sendable, Equatable {
       let learnedText = Self.clean(learned[key])
       guard chosen != nil || own != nil || learnedText != nil else { continue }
       var parts = [chosen?.style ?? Categories.defaultStyles[category] ?? ""]
-      if let learnedText { parts.append("Learned from the user's own corrections: \(learnedText)") }
-      if let own { parts.append("The user's own instructions, which win over everything else: \(own)") }
+      if let learnedText { parts.append("\(Self.learnedLabel)\(learnedText)") }
+      if let own { parts.append("\(Self.ownLabel)\(own)") }
       styles[key] = parts.joined(separator: "\n")
     }
     return styles
