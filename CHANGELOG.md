@@ -2,6 +2,18 @@
 
 All notable changes to diVoice. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [semantic versioning](https://semver.org).
 
+## 0.6.5 — Bluetooth headphones stay in music mode
+
+With Bluetooth headphones, diVoice no longer loops, fails to start or quits.
+
+### Fixed
+
+- **With Bluetooth headphones diVoice could loop, fail to start or quit.** Preparing the headset's microphone between dictations switched it to its call profile, and each switch is a device change: diVoice prepared it again, the headset switched again, every second or so. The music in the headphones got worse, dictations failed with "the microphone changed while starting", and replacing the audio engine on every change could quit diVoice. Now:
+  - A Bluetooth headset's microphone is opened only while you dictate and let go of right after, so the headphones go back to music mode.
+  - A burst of device changes brings a microphone kept ready back on once, a second after the last change.
+  - At the key press, while a headset is still switching profile, diVoice tries again for up to two seconds instead of failing.
+  - A replaced audio engine is released only after 10 seconds, when macOS no longer uses it.
+
 ## 0.6.4 — Headphones can't block diVoice
 
 Connecting headphones no longer freezes or quits diVoice.

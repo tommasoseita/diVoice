@@ -13,6 +13,12 @@ Start with **Settings › Models › Verify**: it checks each step with your key
 - **The first words are cut.** Turn on **Settings › General › Keep the microphone ready**. With a Bluetooth headset it stays off, so wait for the start sound, or choose the Mac's microphone in **Settings › General**.
 - **Another key was pressed with Fn.** Fn plus another key is a shortcut (Fn+arrows, Fn+F keys), so diVoice cancels the dictation.
 
+## Bluetooth headphones
+
+- **The music in your headphones gets worse while you dictate.** macOS switches a Bluetooth headset to its call profile whenever its microphone is in use, which lowers what it plays to 16 kHz mono. diVoice opens the headset's microphone only while you dictate and lets go of it right after. To keep the headphones in music mode all the time, choose the Mac's microphone in **Settings › General › Microphone**: it usually transcribes better, too.
+- **The first dictation after connecting the headphones is slow to start.** The headset takes about a second to switch profile: diVoice waits for it, up to two seconds, then plays the start sound.
+- **"The microphone isn't responding".** The headset didn't answer in 4 seconds. Disconnect and reconnect it, or choose another microphone in **Settings › General**.
+
 ## The overlay shows an error
 
 | Message | What to do |
@@ -87,6 +93,8 @@ To watch them live while you reproduce a problem:
 ```
 
 Attach the output to your [bug report](https://github.com/tommasoseita/divoice/issues/new/choose). Read it first: it contains app names and your organization's server address.
+
+For a problem with the microphone, or a diVoice that doesn't open or freezes, [`scripts/collect-diagnostics.sh`](../scripts/collect-diagnostics.sh) gathers more into `diVoice-diagnostics.zip` on your Desktop: the audio system's messages too, crash and hang reports, where a stuck diVoice is waiting, the audio devices (with their names) and the macOS version. Download it, then in Terminal type `sh ` (with the space), drag the file into the window and press Return. Nothing to copy and paste, so a chat app that turns quotes into curly ones can't break it.
 
 ## Starting over
 

@@ -101,6 +101,10 @@ enum AudioDevices {
 /// thread: a microphone that doesn't answer (a headset connecting, a stuck audio driver) can
 /// hold up a dictation, not the app. The commands return at once; `start` and `stop` report
 /// back on the main thread.
+///
+/// A Bluetooth headset switches to its call profile (16 kHz, music spoiled) whenever its
+/// microphone is opened, even just prepared, and each switch is a device change: its microphone
+/// is set up only at the key press and let go as soon as the dictation ends.
 final class AudioCapture {
   enum CaptureError: LocalizedError {
     case noInput
@@ -131,6 +135,13 @@ final class AudioCapture {
   /// After a device change a ready microphone comes back on this much later, once the new
   /// device has settled (a Bluetooth headset takes a moment to switch profile).
   static let settleSeconds = 1.0
+  /// Tries at a key press while the microphone keeps changing (a Bluetooth headset takes about a
+  /// second to switch profile), `retryDelay` apart.
+  static let startAttempts = 5
+  static let retryDelay = 0.4
+  /// A replaced engine is released this much later: AVAudioEngine's own queue can still call
+  /// into it for a moment after a device change, and crashes if it's gone.
+  static let retiredSeconds = 10.0
 
   /// The audio hardware: engine, device, start and stop.
   private let control = DispatchQueue(label: "app.wibo.divoice.audio.control", qos: .userInitiated)
@@ -158,6 +169,10 @@ final class AudioCapture {
   private var readySampleRate = PCM.sampleRate
   /// The ready microphone is a Bluetooth headset: it isn't kept on.
   private var bluetooth = false
+  /// Device changes so far: a burst of them brings a ready microphone back on once, after the last.
+  private var changes = 0
+  /// Replaced engines, kept for `retiredSeconds`.
+  private var retired: [AVAudioEngine] = []
   /// The current dictation's, set on `control` before the engine starts.
   private var firstBuffer: ((UInt64) -> Void)?
 
@@ -189,7 +204,13 @@ final class AudioCapture {
   /// Prepares engine, device and converter ahead of time, so that on key press only the
   /// hardware start remains. Does not turn the microphone on.
   func prepare(deviceUID: String, sampleRate: Int) {
-    control.async { self.prepareNow(deviceUID: deviceUID, sampleRate: sampleRate) }
+    control.async {
+      if AudioDevices.isBluetooth(uid: deviceUID) {
+        self.releaseMicrophone()
+      } else {
+        self.prepareNow(deviceUID: deviceUID, sampleRate: sampleRate)
+      }
+    }
   }
 
   /// Keeps the microphone on between dictations with the last `preRollMs` in memory. Not with a
@@ -265,11 +286,37 @@ final class AudioCapture {
     if engineRunning, engine.isRunning { return }
     engineNeedsRebuild = true
     appLog.notice("Microphone changed")
+    changes += 1
+    let change = changes
     guard keepReady, !isRunning else { return }
     control.asyncAfter(deadline: .now() + Self.settleSeconds) { [weak self] in
-      guard let self, self.keepReady, !self.isRunning, !self.engine.isRunning else { return }
+      guard let self, change == self.changes, self.keepReady, !self.isRunning, !self.engine.isRunning else { return }
       self.resumeStandby()
     }
+  }
+
+  /// Keeps a replaced engine, stopped, for `retiredSeconds` before releasing it.
+  private func retire(_ old: AVAudioEngine) {
+    old.stop()
+    retired.append(old)
+    control.asyncAfter(deadline: .now() + Self.retiredSeconds) { [weak self] in
+      guard let self, !self.retired.isEmpty else { return }
+      self.retired.removeFirst()
+    }
+  }
+
+  /// Lets go of the microphone, so that a Bluetooth headset goes back to its music profile. The
+  /// next dictation sets it up again.
+  private func releaseMicrophone() {
+    guard !isRunning, configuredDeviceUID != nil else { return }
+    stopEngine(prepareAgain: false)
+    if prepared { try? guarded("tap removal") { engine.inputNode.removeTap(onBus: 0) } }
+    prepared = false
+    retire(engine)
+    engine = AVAudioEngine()
+    observeConfigurationChanges()
+    engineNeedsRebuild = false
+    configuredDeviceUID = nil
   }
 
   /// AVAudioEngine reports some failures with an Objective-C exception instead of an error, such
@@ -302,6 +349,7 @@ final class AudioCapture {
     outputFormat = Self.format(sampleRate)
     if prepared { try? guarded("tap removal") { engine.inputNode.removeTap(onBus: 0) } }
     prepared = false
+    retire(engine)
     engine = AVAudioEngine()
     observeConfigurationChanges()
     engineNeedsRebuild = false
@@ -342,15 +390,17 @@ final class AudioCapture {
   /// `retry`: a device still settling gets one more try a moment later.
   private func resumeStandby(retry: Bool = true) {
     guard keepReady, !isRunning else { return }
+    let change = changes
     let tryAgain = { [weak self] in
       guard retry, let self else { return }
-      self.control.asyncAfter(deadline: .now() + Self.settleSeconds) { [weak self] in self?.resumeStandby(retry: false) }
+      self.control.asyncAfter(deadline: .now() + Self.settleSeconds) { [weak self] in
+        guard let self, change == self.changes else { return }
+        self.resumeStandby(retry: false)
+      }
     }
     bluetooth = AudioDevices.isBluetooth(uid: readyDeviceUID)
     if bluetooth {
-      stopEngine()
-      prepareNow(deviceUID: readyDeviceUID, sampleRate: readySampleRate)
-      if !prepared { tryAgain() }
+      releaseMicrophone()
       return
     }
     if isReady { return }
@@ -377,13 +427,13 @@ final class AudioCapture {
     }
   }
 
-  private func stopEngine() {
+  /// `prepareAgain`: ready for a quick start at the next key press.
+  private func stopEngine(prepareAgain: Bool = true) {
     guard engineRunning else { return }
     engine.stop()
     engineRunning = false
     queue.sync { preRoll.reset() }
-    // Ready for a quick start at the next key press.
-    guard !engineNeedsRebuild else { return }
+    guard prepareAgain, !engineNeedsRebuild else { return }
     do {
       try guarded("prepare") { engine.prepare() }
     } catch {
@@ -406,6 +456,21 @@ final class AudioCapture {
       handlers.firstBuffer(MonotonicClock.nowNs())
       return
     }
+    // While a Bluetooth headset switches to its call profile, its format changes under the
+    // engine: a few more tries before giving up.
+    var attempt = 1
+    while true {
+      do {
+        try openMicrophone(deviceUID: deviceUID, sampleRate: sampleRate, frameBytes: frameBytes, handlers: handlers)
+        return
+      } catch CaptureError.changed where attempt < Self.startAttempts {
+        attempt += 1
+        Thread.sleep(forTimeInterval: Self.retryDelay)
+      }
+    }
+  }
+
+  private func openMicrophone(deviceUID: String, sampleRate: Int, frameBytes: Int, handlers: Handlers) throws {
     stopEngine()
     prepareNow(deviceUID: deviceUID, sampleRate: sampleRate)
     guard prepared, let converter else { throw engineNeedsRebuild ? CaptureError.changed : CaptureError.noInput }
@@ -444,14 +509,24 @@ final class AudioCapture {
         return framer.flush()
       }
     }
-    stopEngine()
+    stopEngine(prepareAgain: false)
     // After the chunks already queued, the rest.
     let rest = queue.sync {
       recording = false
       return framer.flush()
     }
-    // On again if asked meanwhile (another microphone, the setting turned on).
-    if keepReady { resumeStandby() }
+    if AudioDevices.isBluetooth(uid: configuredDeviceUID ?? "") {
+      releaseMicrophone()
+    } else if keepReady {
+      // On again if asked meanwhile (another microphone, the setting turned on).
+      resumeStandby()
+    } else if !engineNeedsRebuild {
+      do {
+        try guarded("prepare") { engine.prepare() }
+      } catch {
+        engineNeedsRebuild = true
+      }
+    }
     return rest
   }
 
