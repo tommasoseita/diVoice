@@ -40,6 +40,8 @@ final class DictationController {
     var processing: Task<Void, Never>?
     /// Hands-free: the stop just before the 10-minute limit.
     var lockLimit: DispatchWorkItem?
+    /// The microphone answered the start, on or not.
+    var microphoneAnswered = false
 
     init(id: UUID, mode: DictationMode, pressNs: UInt64, run: DictationRun, relay: RelayConnection?) {
       self.id = id
@@ -177,29 +179,50 @@ final class DictationController {
     }
 
     let continuation = session.framesContinuation
-    audio.onFrame = { frame in continuation.yield(frame) }
-    audio.onLevel = { [weak self] level in self?.level(level) }
-    // The start sound plays when the microphone is really on: it's the cue to speak.
-    audio.onFirstBuffer = { [weak self, weak session] ns in
-      DispatchQueue.main.async {
-        guard let self, let session, self.recording === session else { return }
-        session.timeline.firstAudioNs = ns
-        Sounds.start(self.settings)
-      }
-    }
+    let handlers = AudioCapture.Handlers(
+      frame: { frame in continuation.yield(frame) },
+      level: { [weak self] level in self?.level(level) },
+      // The start sound plays when the microphone is really on: it's the cue to speak.
+      firstBuffer: { [weak self, weak session] ns in
+        DispatchQueue.main.async {
+          guard let self, let session, self.recording === session else { return }
+          session.timeline.firstAudioNs = ns
+          Sounds.start(self.settings)
+        }
+      })
 
-    do {
-      try audio.start(deviceUID: settings.microphoneUID, sampleRate: DictationRun.sampleRate(for: pipeline))
-    } catch {
-      session.framesContinuation.finish()
-      session.feeder?.cancel()
-      Task { await run.cancel() }
-      overlay.showError(String(localized: "Microphone not available: \(error.localizedDescription)"))
-      return
-    }
     recording = session
     overlay.showRecording(mode: mode)
     onRecordingChange?(true)
+    // The microphone starts off the main thread: one that doesn't answer (a headset connecting)
+    // ends this dictation, it doesn't freeze diVoice.
+    let sampleRate = DictationRun.sampleRate(for: pipeline)
+    audio.start(deviceUID: settings.microphoneUID, sampleRate: sampleRate, handlers: handlers) { [weak self, weak session] error in
+      guard let self, let session else { return }
+      session.microphoneAnswered = true
+      if let error {
+        self.microphoneFailed(session, String(localized: "Microphone not available: \(error.localizedDescription)"))
+      }
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + Self.microphoneTimeout) { [weak self, weak session] in
+      guard let self, let session, !session.microphoneAnswered else { return }
+      appLog.error("The microphone didn't answer in \(Self.microphoneTimeout, privacy: .public) s")
+      self.microphoneFailed(
+        session,
+        String(localized: "The microphone isn't responding. Disconnect and reconnect the headphones, or choose another microphone in Settings."))
+    }
+  }
+
+  /// A Bluetooth headset switching profile takes a second or two: longer, it isn't answering.
+  static let microphoneTimeout: TimeInterval = 4
+
+  /// The microphone didn't start or didn't answer: the dictation ends, with the reason.
+  private func microphoneFailed(_ session: Session, _ message: String) {
+    guard !session.finished else { return }
+    session.processing?.cancel()
+    session.feeder?.cancel()
+    Task { await session.run.cancel() }
+    fail(session, message)
   }
 
   /// The task's result if it arrives in time, otherwise nil (the task goes on).
@@ -243,8 +266,17 @@ final class DictationController {
     recording = nil
     session.mode = mode
     session.timeline.releaseNs = releaseNs
-    if let rest = audio.stop() { session.framesContinuation.yield(rest) }
-    session.framesContinuation.finish()
+    // The last bit of audio, then the end; a microphone that doesn't answer keeps nothing waiting.
+    let frames = session.framesContinuation
+    let ended = OnceFlag()
+    audio.stop { rest in
+      guard ended.claim() else { return }
+      if let rest { frames.yield(rest) }
+      frames.finish()
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+      if ended.claim() { frames.finish() }
+    }
     inFlight[session.id] = session
     overlay.showProcessing(mode: mode)
     onRecordingChange?(false)
@@ -287,7 +319,7 @@ final class DictationController {
     guard let session = recording else { return }
     recording = nil
     session.lockLimit?.cancel()
-    _ = audio.stop()
+    audio.stop()
     session.finished = true
     session.framesContinuation.finish()
     Task {
@@ -402,7 +434,8 @@ final class DictationController {
     guard !session.finished else { return }
     if recording === session {
       recording = nil
-      _ = audio.stop()
+      session.lockLimit?.cancel()
+      audio.stop()
       session.framesContinuation.finish()
       onRecordingChange?(false)
     }

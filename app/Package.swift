@@ -3,7 +3,7 @@ import PackageDescription
 
 // Sparkle 2.10.1 as a local xcframework, downloaded and verified by scripts/fetch-sparkle.sh
 // (build-app.sh and test-app.sh run it on their own if it is missing).
-let appDependencies: [Target.Dependency] = ["DiVoiceCore", "DiVoiceEngine", "DiVoiceKit", "Sparkle"]
+let appDependencies: [Target.Dependency] = ["DiVoiceCore", "DiVoiceEngine", "DiVoiceKit", "DiVoiceObjC", "Sparkle"]
 let appLinker: [LinkerSetting] = [
   .linkedFramework("AppKit"),
   .linkedFramework("AVFoundation"),
@@ -25,6 +25,8 @@ let package = Package(
     .target(name: "DiVoiceEngine", dependencies: ["DiVoiceCore"], path: "Sources/DiVoiceEngine"),
     // AppKit components testable without the app (main menu, ...).
     .target(name: "DiVoiceKit", path: "Sources/DiVoiceKit", linkerSettings: [.linkedFramework("AppKit")]),
+    // Objective-C exceptions from AVAudioEngine, caught instead of quitting the app.
+    .target(name: "DiVoiceObjC", path: "Sources/DiVoiceObjC"),
     // AppKit/SwiftUI app. Swift 5 mode to coexist with the C callbacks of
     // CGEventTap, Core Audio and Accessibility without concurrency annotations everywhere.
     .executableTarget(

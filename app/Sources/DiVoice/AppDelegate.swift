@@ -34,11 +34,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
       NSApp.terminate(nil)
       return
     }
+    // The icon first: it shows diVoice is open whatever happens next.
+    statusItem = StatusItemController(history: history)
     updater = Updater(settings: settings)
     overlay = OverlayController()
     controller = DictationController(settings: settings, overlay: overlay, history: history)
     hotkeys = HotkeyMonitor(triggers: settings.triggers)
-    statusItem = StatusItemController(history: history)
 
     hotkeys.onAction = { [weak self] action in self?.controller.handle(action) }
     hotkeys.onReset = { [weak self] in self?.controller.handle(.cancel(.otherKey)) }
@@ -109,6 +110,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     } else if needsSetup {
       showSetup()
     }
+  }
+
+  /// diVoice opened again while it's running (from Applications, Spotlight or Launchpad): it has
+  /// no window of its own, so the settings show it's there, even with its icon hidden.
+  func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+    guard controller != nil else { return false }
+    if needsSetup { showSetup() } else { showSettings() }
+    return false
   }
 
   /// divoice://join links, from the invite page's "Open diVoice" button.

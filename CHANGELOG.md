@@ -2,6 +2,19 @@
 
 All notable changes to diVoice. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [semantic versioning](https://semver.org).
 
+## 0.6.4 — Headphones can't block diVoice
+
+Connecting headphones no longer freezes or quits diVoice.
+
+### Fixed
+
+- **diVoice could freeze or quit when headphones were connected, and then not open again.** diVoice set up the microphone on the same thread as its icon and menus, and before showing its icon: a headset that took long to answer, or changed format while diVoice set it up, left diVoice frozen with no icon, or quit it. Opening it again did nothing. Now:
+  - The microphone is set up apart from the rest of diVoice. If it doesn't answer within 4 seconds, the dictation ends with "The microphone isn't responding", and diVoice stays usable.
+  - A microphone that changes while it starts is reported as an error, and diVoice tries again, instead of quitting.
+  - After headphones are connected or disconnected, a microphone kept ready waits a second for them to settle before it comes back on.
+  - The menu-bar icon appears before anything else.
+- **Opening diVoice while it was already running did nothing.** It now opens Settings (or the setup, if it isn't finished), so you can see diVoice is running even when its menu-bar icon is hidden.
+
 ## 0.6.3 — No more made-up greetings
 
 diVoice no longer adds greetings, signatures or names you didn't say.

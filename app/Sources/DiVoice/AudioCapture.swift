@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreAudio
 import DiVoiceCore
+import DiVoiceObjC
 
 struct AudioInputDevice: Identifiable, Hashable {
   let id: AudioDeviceID
@@ -95,43 +96,60 @@ enum AudioDevices {
 /// `preRollMs` are kept, in memory; a dictation starts with them, so the words said while
 /// the key goes down aren't cut. Otherwise the microphone turns on at the key press, which
 /// takes about 0.2 s.
+///
+/// Everything that touches the audio hardware runs on `control`, in order, never on the main
+/// thread: a microphone that doesn't answer (a headset connecting, a stuck audio driver) can
+/// hold up a dictation, not the app. The commands return at once; `start` and `stop` report
+/// back on the main thread.
 final class AudioCapture {
   enum CaptureError: LocalizedError {
     case noInput
     case converter
+    /// The microphone changed while it was being set up (a headset connecting).
+    case changed
 
     var errorDescription: String? {
       switch self {
       case .noInput: return String(localized: "no microphone available")
       case .converter: return String(localized: "unsupported audio format")
+      case .changed: return String(localized: "the microphone changed while starting, try again")
       }
     }
   }
 
-  /// Called on the audio queue.
-  var onFrame: ((Data) -> Void)?
-  var onLevel: ((Float) -> Void)?
-  /// When the audio starts: the first buffer after the microphone turns on, or at once when ready.
-  var onFirstBuffer: ((UInt64) -> Void)?
+  /// Where a dictation's audio goes. `frame` and `level` are called on the audio queue.
+  struct Handlers {
+    var frame: (Data) -> Void
+    var level: (Float) -> Void
+    /// When the audio starts: the first buffer after the microphone turns on, or at once when
+    /// ready. On the engine's thread or `control`.
+    var firstBuffer: (UInt64) -> Void
+  }
 
   /// What a dictation gets from before the key press.
   static let preRollMs = 500
+  /// After a device change a ready microphone comes back on this much later, once the new
+  /// device has settled (a Bluetooth headset takes a moment to switch profile).
+  static let settleSeconds = 1.0
 
+  /// The audio hardware: engine, device, start and stop.
+  private let control = DispatchQueue(label: "app.wibo.divoice.audio.control", qos: .userInitiated)
+  /// The converted audio: the frames of a dictation, or the ring between dictations.
+  private let queue = DispatchQueue(label: "app.wibo.divoice.audio", qos: .userInteractive)
+
+  // On `control`.
   private var engine = AVAudioEngine()
   private var converter: AVAudioConverter?
   private var framer = PCMFramer()
-  private let queue = DispatchQueue(label: "app.wibo.divoice.audio", qos: .userInteractive)
   private var outputFormat = AudioCapture.format(PCM.sampleRate)
   private(set) var sampleRate = PCM.sampleRate
   private var engineNeedsRebuild = false
   private var configuredDeviceUID: String?
   private var observer: NSObjectProtocol?
   private var prepared = false
-  /// Setting the device can itself report a configuration change: not one to act on.
-  private var configuring = false
   private var firstBufferPending = false
   /// A dictation is being captured.
-  private(set) var isRunning = false
+  private var isRunning = false
   /// The engine is on: for a dictation, or ready between dictations.
   private var engineRunning = false
   /// Ready between dictations was asked for, with this microphone and sample rate.
@@ -140,9 +158,23 @@ final class AudioCapture {
   private var readySampleRate = PCM.sampleRate
   /// The ready microphone is a Bluetooth headset: it isn't kept on.
   private var bluetooth = false
-  /// On `queue`: frames go to `onFrame` while recording, otherwise into the ring.
+  /// The current dictation's, set on `control` before the engine starts.
+  private var firstBuffer: ((UInt64) -> Void)?
+
+  // On `queue`.
+  /// Frames go to `handlers` while recording, otherwise into the ring.
   private var recording = false
+  private var handlers: Handlers?
   private var preRoll = PCMRing(ms: AudioCapture.preRollMs, sampleRate: PCM.sampleRate)
+
+  /// Setting the device can itself report a configuration change: not one to act on. Read on
+  /// the thread that posts the change, hence the lock.
+  private let configuringLock = NSLock()
+  private var configuringNow = false
+  private var configuring: Bool {
+    get { configuringLock.withLock { configuringNow } }
+    set { configuringLock.withLock { configuringNow = newValue } }
+  }
 
   init() {
     observeConfigurationChanges()
@@ -152,103 +184,182 @@ final class AudioCapture {
     if let observer { NotificationCenter.default.removeObserver(observer) }
   }
 
-  private func observeConfigurationChanges() {
-    if let observer { NotificationCenter.default.removeObserver(observer) }
-    // Device or format change: the engine stops and is recreated at the next recording; when
-    // ready, it comes back on (or stays off for a Bluetooth headset).
-    observer = NotificationCenter.default.addObserver(
-      forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
-    ) { [weak self] _ in
-      guard let self, !self.configuring else { return }
-      // A real change stops the engine; one that left it running needs nothing.
-      if self.engineRunning, self.engine.isRunning { return }
-      self.engineNeedsRebuild = true
-      guard self.keepReady, !self.isRunning else { return }
-      DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-        guard let self, self.keepReady, !self.isRunning, !self.engine.isRunning else { return }
-        self.resumeStandby()
-      }
-    }
-  }
+  // MARK: Commands, from the main thread
 
   /// Prepares engine, device and converter ahead of time, so that on key press only the
   /// hardware start remains. Does not turn the microphone on.
   func prepare(deviceUID: String, sampleRate: Int) {
+    control.async { self.prepareNow(deviceUID: deviceUID, sampleRate: sampleRate) }
+  }
+
+  /// Keeps the microphone on between dictations with the last `preRollMs` in memory. Not with a
+  /// Bluetooth headset: an open microphone switches it to its call profile, which spoils what it
+  /// plays. During a dictation the request waits for its end.
+  func standby(deviceUID: String, sampleRate: Int) {
+    control.async {
+      self.keepReady = true
+      self.readyDeviceUID = deviceUID
+      self.readySampleRate = sampleRate
+      guard !self.isRunning else { return }
+      self.resumeStandby()
+    }
+  }
+
+  /// The microphone off between dictations until `standby` again (the Mac sleeps or locks).
+  func pauseStandby() {
+    control.async {
+      guard !self.isRunning else { return }
+      self.stopEngine()
+    }
+  }
+
+  /// The microphone turns on only at the key press again.
+  func endStandby() {
+    control.async {
+      self.keepReady = false
+      guard !self.isRunning else { return }
+      self.stopEngine()
+    }
+  }
+
+  /// Turns the microphone on for a dictation. `completion` runs on the main thread, with the
+  /// error if it couldn't start; it doesn't run while the microphone doesn't answer.
+  func start(deviceUID: String, sampleRate: Int, handlers: Handlers, completion: @escaping (Error?) -> Void) {
+    control.async {
+      var failure: Error?
+      do {
+        try self.startNow(deviceUID: deviceUID, sampleRate: sampleRate, handlers: handlers)
+      } catch {
+        failure = error
+      }
+      DispatchQueue.main.async { completion(failure) }
+    }
+  }
+
+  /// Stops capturing; `completion` gets the remaining audio (less than 100 ms) on the main thread.
+  func stop(completion: ((Data?) -> Void)? = nil) {
+    control.async {
+      let rest = self.stopNow()
+      if let completion { DispatchQueue.main.async { completion(rest) } }
+    }
+  }
+
+  // MARK: Device changes
+
+  private func observeConfigurationChanges() {
+    if let observer { NotificationCenter.default.removeObserver(observer) }
+    let observed = engine
+    // Device or format change: the engine stops and is recreated at the next recording; when
+    // ready, it comes back on once the device has settled (or stays off for a Bluetooth headset).
+    observer = NotificationCenter.default.addObserver(
+      forName: .AVAudioEngineConfigurationChange, object: observed, queue: nil
+    ) { [weak self] _ in
+      guard let self, !self.configuring else { return }
+      self.control.async { self.configurationChanged(observed) }
+    }
+  }
+
+  private func configurationChanged(_ observed: AVAudioEngine) {
+    guard observed === engine else { return }
+    // A real change stops the engine; one that left it running needs nothing.
+    if engineRunning, engine.isRunning { return }
+    engineNeedsRebuild = true
+    appLog.notice("Microphone changed")
+    guard keepReady, !isRunning else { return }
+    control.asyncAfter(deadline: .now() + Self.settleSeconds) { [weak self] in
+      guard let self, self.keepReady, !self.isRunning, !self.engine.isRunning else { return }
+      self.resumeStandby()
+    }
+  }
+
+  /// AVAudioEngine reports some failures with an Objective-C exception instead of an error, such
+  /// as a microphone that changes format while it's being set up: without this they would quit
+  /// diVoice.
+  private func guarded(_ step: String, _ body: () throws -> Void) throws {
+    var failure: Error?
+    let exception = DVCatchException {
+      do {
+        try body()
+      } catch {
+        failure = error
+      }
+    }
+    if let exception {
+      appLog.error("Microphone \(step, privacy: .public): \(exception.name.rawValue, privacy: .public) \(exception.reason ?? "", privacy: .public)")
+      throw CaptureError.changed
+    }
+    if let failure { throw failure }
+  }
+
+  // MARK: On `control`
+
+  private func prepareNow(deviceUID: String, sampleRate: Int) {
     guard !isRunning, !engineRunning else { return }
     if prepared && !engineNeedsRebuild && configuredDeviceUID == deviceUID && self.sampleRate == sampleRate { return }
     configuring = true
     defer { configuring = false }
     self.sampleRate = sampleRate
     outputFormat = Self.format(sampleRate)
-    if prepared { engine.inputNode.removeTap(onBus: 0) }
+    if prepared { try? guarded("tap removal") { engine.inputNode.removeTap(onBus: 0) } }
     prepared = false
     engine = AVAudioEngine()
     observeConfigurationChanges()
     engineNeedsRebuild = false
-
-    let input = engine.inputNode
-    if !deviceUID.isEmpty, let id = AudioDevices.deviceID(forUID: deviceUID), let unit = input.audioUnit {
-      var device = id
-      AudioUnitSetProperty(
-        unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
-        &device, UInt32(MemoryLayout<AudioDeviceID>.size)
-      )
-    }
     configuredDeviceUID = deviceUID
 
-    let inputFormat = input.outputFormat(forBus: 0)
-    guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0,
-          let converter = AVAudioConverter(from: inputFormat, to: outputFormat)
-    else { return }
-    self.converter = converter
-    input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
-      self?.process(buffer)
+    do {
+      try guarded("setup") {
+        let input = engine.inputNode
+        if !deviceUID.isEmpty, let id = AudioDevices.deviceID(forUID: deviceUID), let unit = input.audioUnit {
+          var device = id
+          AudioUnitSetProperty(
+            unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+            &device, UInt32(MemoryLayout<AudioDeviceID>.size)
+          )
+        }
+        let inputFormat = input.outputFormat(forBus: 0)
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0,
+              let converter = AVAudioConverter(from: inputFormat, to: outputFormat)
+        else { return }
+        self.converter = converter
+        input.installTap(onBus: 0, bufferSize: 1024, format: inputFormat) { [weak self] buffer, _ in
+          self?.process(buffer)
+        }
+        engine.prepare()
+        prepared = true
+      }
+    } catch {
+      // The device changed meanwhile: a new engine next time.
+      prepared = false
+      engineNeedsRebuild = true
     }
-    engine.prepare()
-    prepared = true
-  }
-
-  // MARK: Ready between dictations
-
-  /// Keeps the microphone on between dictations with the last `preRollMs` in memory. Not with a
-  /// Bluetooth headset: an open microphone switches it to its call profile, which spoils what it
-  /// plays. During a dictation the request waits for its end.
-  func standby(deviceUID: String, sampleRate: Int) {
-    keepReady = true
-    readyDeviceUID = deviceUID
-    readySampleRate = sampleRate
-    guard !isRunning else { return }
-    resumeStandby()
-  }
-
-  /// The microphone off between dictations until `standby` again (the Mac sleeps or locks).
-  func pauseStandby() {
-    guard !isRunning else { return }
-    stopEngine()
-  }
-
-  /// The microphone turns on only at the key press again.
-  func endStandby() {
-    keepReady = false
-    pauseStandby()
   }
 
   private var isReady: Bool {
     !bluetooth && engineRunning && engine.isRunning && !engineNeedsRebuild && configuredDeviceUID == readyDeviceUID && sampleRate == readySampleRate
   }
 
-  private func resumeStandby() {
+  /// `retry`: a device still settling gets one more try a moment later.
+  private func resumeStandby(retry: Bool = true) {
     guard keepReady, !isRunning else { return }
+    let tryAgain = { [weak self] in
+      guard retry, let self else { return }
+      self.control.asyncAfter(deadline: .now() + Self.settleSeconds) { [weak self] in self?.resumeStandby(retry: false) }
+    }
     bluetooth = AudioDevices.isBluetooth(uid: readyDeviceUID)
     if bluetooth {
       stopEngine()
-      prepare(deviceUID: readyDeviceUID, sampleRate: readySampleRate)
+      prepareNow(deviceUID: readyDeviceUID, sampleRate: readySampleRate)
+      if !prepared { tryAgain() }
       return
     }
     if isReady { return }
     stopEngine()
-    prepare(deviceUID: readyDeviceUID, sampleRate: readySampleRate)
-    guard prepared, let converter else { return }
+    prepareNow(deviceUID: readyDeviceUID, sampleRate: readySampleRate)
+    guard prepared, let converter else {
+      tryAgain()
+      return
+    }
     converter.reset()
     let sampleRate = self.sampleRate
     queue.sync {
@@ -257,10 +368,12 @@ final class AudioCapture {
     }
     firstBufferPending = false
     do {
-      try engine.start()
+      try guarded("start") { try engine.start() }
       engineRunning = true
     } catch {
       engineNeedsRebuild = true
+      appLog.error("Microphone not ready: \(error.localizedDescription, privacy: .public)")
+      tryAgain()
     }
   }
 
@@ -270,36 +383,42 @@ final class AudioCapture {
     engineRunning = false
     queue.sync { preRoll.reset() }
     // Ready for a quick start at the next key press.
-    if !engineNeedsRebuild { engine.prepare() }
+    guard !engineNeedsRebuild else { return }
+    do {
+      try guarded("prepare") { engine.prepare() }
+    } catch {
+      engineNeedsRebuild = true
+    }
   }
 
-  // MARK: A dictation
-
-  func start(deviceUID: String, sampleRate: Int) throws {
-    if isRunning { _ = stop() }
+  private func startNow(deviceUID: String, sampleRate: Int, handlers: Handlers) throws {
+    if isRunning { _ = stopNow() }
     let frameBytes = PCM.frameBytes(sampleRate: sampleRate)
     // Ready: the moment before the key goes first, in order, then the live audio.
     if keepReady, isReady, deviceUID == readyDeviceUID, sampleRate == readySampleRate {
       queue.sync {
+        self.handlers = handlers
         framer = PCMFramer(frameBytes: frameBytes)
         recording = true
-        for frame in framer.append(preRoll.take()) { onFrame?(frame) }
+        for frame in framer.append(preRoll.take()) { handlers.frame(frame) }
       }
       isRunning = true
-      onFirstBuffer?(MonotonicClock.nowNs())
+      handlers.firstBuffer(MonotonicClock.nowNs())
       return
     }
     stopEngine()
-    prepare(deviceUID: deviceUID, sampleRate: sampleRate)
-    guard prepared, let converter else { throw CaptureError.noInput }
+    prepareNow(deviceUID: deviceUID, sampleRate: sampleRate)
+    guard prepared, let converter else { throw engineNeedsRebuild ? CaptureError.changed : CaptureError.noInput }
     converter.reset()
     queue.sync {
+      self.handlers = handlers
       framer = PCMFramer(frameBytes: frameBytes)
       recording = true
     }
+    firstBuffer = handlers.firstBuffer
     firstBufferPending = true
     do {
-      try engine.start()
+      try guarded("start") { try engine.start() }
     } catch {
       engineNeedsRebuild = true
       queue.sync { recording = false }
@@ -314,7 +433,7 @@ final class AudioCapture {
   }
 
   /// Stops capturing and returns the remaining audio (less than 100 ms).
-  func stop() -> Data? {
+  private func stopNow() -> Data? {
     guard isRunning else { return nil }
     isRunning = false
     // Ready: the microphone stays on and the ring starts over.
@@ -336,10 +455,11 @@ final class AudioCapture {
     return rest
   }
 
+  /// On the engine's thread.
   private func process(_ buffer: AVAudioPCMBuffer) {
     if firstBufferPending {
       firstBufferPending = false
-      onFirstBuffer?(MonotonicClock.nowNs())
+      firstBuffer?(MonotonicClock.nowNs())
     }
     var level: Float?
     if let channels = buffer.floatChannelData {
@@ -370,8 +490,8 @@ final class AudioCapture {
         self.preRoll.append(data)
         return
       }
-      if let level { self.onLevel?(level) }
-      for frame in self.framer.append(data) { self.onFrame?(frame) }
+      if let level { self.handlers?.level(level) }
+      for frame in self.framer.append(data) { self.handlers?.frame(frame) }
     }
   }
 }

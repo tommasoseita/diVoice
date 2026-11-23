@@ -64,6 +64,8 @@
 "Median (p50)" = "Mediana (p50)";
 "Microphone" = "Microfono";
 "Microphone not available: %@" = "Microfono non disponibile: %@";
+"The microphone isn't responding. Disconnect and reconnect the headphones, or choose another microphone in Settings." = "Il microfono non risponde. Scollega e ricollega le cuffie, o scegli un altro microfono nelle Impostazioni.";
+"the microphone changed while starting, try again" = "il microfono è cambiato mentre partiva, riprova";
 "Microphone permission missing" = "Manca il permesso del microfono";
 "Minimize" = "Riduci a icona";
 "Mode" = "Modalità";
